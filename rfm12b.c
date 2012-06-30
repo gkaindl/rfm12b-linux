@@ -94,11 +94,6 @@ struct rfm12_data {
 	u8                   rxtx_watchdog_running;
 };
 
-static int platform_module_init(struct rfm12_data* dev_data);
-static int platform_irq_init(struct rfm12_data* dev_data);
-static int platform_irq_cleanup(struct rfm12_data* dev_data);
-static int platform_module_cleanup(struct rfm12_data* dev_data);
-
 #include "platform/platform.h"
 #include "platform/plat_am33xx.h"
 
@@ -679,7 +674,7 @@ rfm12_open(struct inode *inode, struct file *filp)
 		 goto pError;
 	   }
 
-	  err = platform_irq_init(rfm12);
+	  err = platform_irq_init((void*)rfm12);
 	  has_irq = (0 == err);
 
 	  spin_lock_irqsave(&rfm12->rfm12_lock, flags);
@@ -732,7 +727,7 @@ rfm12_open(struct inode *inode, struct file *filp)
 pError:
 
    if (err)
-	  platform_irq_cleanup(rfm12);
+	  platform_irq_cleanup((void*)rfm12);
 
 	mutex_unlock(&device_list_lock);
 	return err;
@@ -754,7 +749,7 @@ rfm12_release(struct inode *inode, struct file *filp)
 	if (0 == rfm12->open) {
 		int dofree = 0;
 
-	  platform_irq_cleanup(rfm12);
+	  platform_irq_cleanup((void*)rfm12);
 
 	  spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
@@ -887,27 +882,25 @@ static struct spi_driver rfm12_spi_driver = {
 
 /*** NEW CODE STARTS HERE ***/
 
-struct rfm12_data dev_data;
-
 int __init
 rfm12_init_module(void)
 {
 	int err;
 
-	err = platform_module_init(&dev_data);
+	err = platform_module_init();
 	if (err)
 		goto errReturn;
 	
 	err = register_chrdev(RFM12_SPI_MAJOR, "spi", &rfm12_fops);
 	if (err < 0) {
-		platform_module_cleanup(&dev_data);
+		platform_module_cleanup();
 		goto errReturn;
 	}
 	
 	rfm12_class = class_create(THIS_MODULE, RFM12_NAME);
 	if (IS_ERR(rfm12_class)) {
 		unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
-		platform_module_cleanup(&dev_data);
+		platform_module_cleanup();
 		err = PTR_ERR(rfm12_class);
 		goto errReturn;
 	}
@@ -916,7 +909,7 @@ rfm12_init_module(void)
 	if (err < 0) {
 		class_destroy(rfm12_class);
 		unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
-		platform_module_cleanup(&dev_data);
+		platform_module_cleanup();
 	}
 
 errReturn:
@@ -943,7 +936,7 @@ rfm12_cleanup_module(void)
 	class_destroy(rfm12_class);
 	unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
 	
-	(void)platform_module_cleanup(&dev_data);
+	(void)platform_module_cleanup();
 
 	printk(
 		KERN_INFO RFM12B_DRV_NAME

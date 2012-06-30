@@ -82,19 +82,19 @@ static irqreturn_t
 am33xx_irq_handler(int irq, void* dev_id);
 
 static int
-am33xx_init_pinmux_settings(struct rfm12_data* dev_data);
+am33xx_init_pinmux_settings(void);
 static int
-am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data);
+am33xx_cleanup_pinmux_settings(void);
 
 static int
-am33xx_setup_irq_pin(struct rfm12_data* dev_data);
+am33xx_setup_irq_pin(void);
 static int
-am33xx_cleanup_irq_pin(struct rfm12_data* dev_data);
+am33xx_cleanup_irq_pin(void);
 
 static int
-am33xx_register_spi_device(struct rfm12_data* dev_data);
+am33xx_register_spi_device(void);
 static int
-am33xx_deregister_spi_device(struct rfm12_data* dev_data);
+am33xx_deregister_spi_device(void);
 
 static irqreturn_t
 am33xx_irq_handler(int irq, void* dev_id)
@@ -103,13 +103,11 @@ am33xx_irq_handler(int irq, void* dev_id)
 }
 
 static int
-am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
+am33xx_init_pinmux_settings(void)
 {	
 	void* addr = NULL;
 	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
-	
-	(void)dev_data;
-	
+		
 	while (0 != pin_conf->pin_addr) {
 		if (pin_conf->claimed) continue;
 		
@@ -119,7 +117,7 @@ am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
 				pin_conf->pin_addr
 			);
 		
-			(void)am33xx_cleanup_pinmux_settings(dev_data);
+			(void)am33xx_cleanup_pinmux_settings();
 		
 			return -EBUSY;
 		}
@@ -131,7 +129,7 @@ am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
 				pin_conf->pin_addr
 			);
 			
-			(void)am33xx_cleanup_pinmux_settings(dev_data);
+			(void)am33xx_cleanup_pinmux_settings();
 			
 			return -EBUSY;
 		}
@@ -147,11 +145,9 @@ am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
 }
 
 static int
-am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data)
+am33xx_cleanup_pinmux_settings(void)
 {	
 	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
-
-	(void)dev_data;
 	
 	while (0 != pin_conf->pin_addr) {
 		if (pin_conf->claimed) {
@@ -166,7 +162,7 @@ am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data)
 }
 
 static int
-am33xx_setup_irq_pin(struct rfm12_data* dev_data)
+am33xx_setup_irq_pin(void)
 {
 	int err;
 	
@@ -193,8 +189,7 @@ am33xx_setup_irq_pin(struct rfm12_data* dev_data)
 		goto gpioErrReturn;
 	}
 	
-	dev_data->irq = (u16)err;
-	am33xx_conf.irq = dev_data->irq;
+	am33xx_conf.irq = (u16)err;
 	
 	err = 0;
 	return err;
@@ -208,10 +203,9 @@ errReturn:
 }
 
 static int
-am33xx_cleanup_irq_pin(struct rfm12_data* dev_data)
+am33xx_cleanup_irq_pin(void)
 {
-	(void)dev_data;
-	(void)platform_irq_cleanup(dev_data);
+	(void)platform_irq_cleanup(NULL);
 	
 	if (am33xx_conf.state.gpio_claimed) {
 		gpio_free(am33xx_irq_pin);
@@ -222,53 +216,53 @@ am33xx_cleanup_irq_pin(struct rfm12_data* dev_data)
 }
 
 static int
-platform_module_init(struct rfm12_data* dev_data)
+platform_module_init(void)
 {
 	int err;
 	
-	err = am33xx_init_pinmux_settings(dev_data);
+	err = am33xx_init_pinmux_settings();
 	if (0 != err) goto muxFailed;
 	
-	err = am33xx_setup_irq_pin(dev_data);
+	err = am33xx_setup_irq_pin();
 	if (0 != err) goto irqFailed;
 	
-	err = am33xx_register_spi_device(dev_data);
+	err = am33xx_register_spi_device();
 	if (0 != err) goto spiFailed;
 	
 	return err;
 
 spiFailed:
-	am33xx_cleanup_irq_pin(dev_data);
+	am33xx_cleanup_irq_pin();
 irqFailed:
-	am33xx_cleanup_pinmux_settings(dev_data);
+	am33xx_cleanup_pinmux_settings();
 muxFailed:
 	return err;
 }
 
 static int
-platform_module_cleanup(struct rfm12_data* dev_data)
+platform_module_cleanup(void)
 {
-	(void)am33xx_cleanup_pinmux_settings(dev_data);
-	(void)am33xx_cleanup_irq_pin(dev_data);
-	(void)am33xx_deregister_spi_device(dev_data);
+	(void)am33xx_cleanup_pinmux_settings();
+	(void)am33xx_cleanup_irq_pin();
+	(void)am33xx_deregister_spi_device();
 	
 	return 0;
 }
 
 static int
-platform_irq_init(struct rfm12_data* dev_data)
+platform_irq_init(void* ctx)
 {
 	int err;
 	
-	(void)dev_data;
-	
 	if (am33xx_conf.state.irq_active) return -EBUSY;
 	
-	err = request_irq(am33xx_conf.irq,
-					  am33xx_irq_handler,
-					  IRQF_DISABLED,
-					  RFM12B_DRV_NAME,
-					  (void*)dev_data);
+	err = request_irq(
+		am33xx_conf.irq,
+		am33xx_irq_handler,
+		IRQF_DISABLED,
+		RFM12B_DRV_NAME,
+		ctx
+	);
 	
 	if (0 == err)
 		am33xx_conf.state.irq_active = 1;
@@ -283,14 +277,12 @@ platform_irq_init(struct rfm12_data* dev_data)
 }
 
 static int
-platform_irq_cleanup(struct rfm12_data* dev_data)
+platform_irq_cleanup(void* ctx)
 {
 	int err = 0;
-	
-	(void)dev_data;
-	
+		
 	if (am33xx_conf.state.irq_active) {
-		free_irq(am33xx_conf.irq, (void*)dev_data);
+		free_irq(am33xx_conf.irq, ctx);
 		am33xx_conf.state.irq_active = 0;
 	}
 	
@@ -298,7 +290,7 @@ platform_irq_cleanup(struct rfm12_data* dev_data)
 }
 
 static int
-am33xx_register_spi_device(struct rfm12_data* dev_data)
+am33xx_register_spi_device(void)
 {
 	int err = 0;
 	struct spi_master* spi_master;
@@ -381,7 +373,7 @@ errReturn:
 }
 
 static int
-am33xx_deregister_spi_device(struct rfm12_data* dev_data)
+am33xx_deregister_spi_device(void)
 {
 	if (NULL != am33xx_conf.spi_device) {
 		spi_unregister_device(am33xx_conf.spi_device);
