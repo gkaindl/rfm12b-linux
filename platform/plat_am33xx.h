@@ -5,6 +5,7 @@
 #include <asm/io.h>
 #include <mach/gpio.h>
 
+
 #define AM33XX_CONTROL_BASE		0x44e10000
 
 /*
@@ -77,23 +78,32 @@ static struct am33xx_pin_config am33xx_pin_configs[] = {
 
 static struct am33xx_config am33xx_conf;
 
-static irqreturn_t am33xx_irq_handler(int irq, void* dev_id);
+static irqreturn_t
+am33xx_irq_handler(int irq, void* dev_id);
 
-static int am33xx_init_pinmux_settings(struct rfm12_data* dev_data);
-static int am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data);
+static int
+am33xx_init_pinmux_settings(struct rfm12_data* dev_data);
+static int
+am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data);
 
-static int am33xx_setup_irq_pin(struct rfm12_data* dev_data);
-static int am33xx_cleanup_irq_pin(struct rfm12_data* dev_data);
+static int
+am33xx_setup_irq_pin(struct rfm12_data* dev_data);
+static int
+am33xx_cleanup_irq_pin(struct rfm12_data* dev_data);
 
-static int am33xx_register_spi_device(struct rfm12_data* dev_data);
-static int am33xx_deregister_spi_device(struct rfm12_data* dev_data);
+static int
+am33xx_register_spi_device(struct rfm12_data* dev_data);
+static int
+am33xx_deregister_spi_device(struct rfm12_data* dev_data);
 
-static irqreturn_t am33xx_irq_handler(int irq, void* dev_id)
+static irqreturn_t
+am33xx_irq_handler(int irq, void* dev_id)
 {
 	return IRQ_HANDLED;
 }
 
-static int am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
+static int
+am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
 {	
 	void* addr = NULL;
 	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
@@ -136,7 +146,8 @@ static int am33xx_init_pinmux_settings(struct rfm12_data* dev_data)
 	return 0;
 }
 
-static int am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data)
+static int
+am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data)
 {	
 	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
 
@@ -154,7 +165,8 @@ static int am33xx_cleanup_pinmux_settings(struct rfm12_data* dev_data)
 	return 0;
 }
 
-static int am33xx_setup_irq_pin(struct rfm12_data* dev_data)
+static int
+am33xx_setup_irq_pin(struct rfm12_data* dev_data)
 {
 	int err;
 	
@@ -195,7 +207,8 @@ errReturn:
 	return err;
 }
 
-static int am33xx_cleanup_irq_pin(struct rfm12_data* dev_data)
+static int
+am33xx_cleanup_irq_pin(struct rfm12_data* dev_data)
 {
 	(void)dev_data;
 	(void)platform_irq_cleanup(dev_data);
@@ -208,7 +221,8 @@ static int am33xx_cleanup_irq_pin(struct rfm12_data* dev_data)
 	return 0;
 }
 
-static int platform_module_init(struct rfm12_data* dev_data)
+static int
+platform_module_init(struct rfm12_data* dev_data)
 {
 	int err;
 	
@@ -231,7 +245,8 @@ muxFailed:
 	return err;
 }
 
-static int platform_module_cleanup(struct rfm12_data* dev_data)
+static int
+platform_module_cleanup(struct rfm12_data* dev_data)
 {
 	(void)am33xx_cleanup_pinmux_settings(dev_data);
 	(void)am33xx_cleanup_irq_pin(dev_data);
@@ -240,7 +255,8 @@ static int platform_module_cleanup(struct rfm12_data* dev_data)
 	return 0;
 }
 
-static int platform_irq_init(struct rfm12_data* dev_data)
+static int
+platform_irq_init(struct rfm12_data* dev_data)
 {
 	int err;
 	
@@ -266,7 +282,8 @@ static int platform_irq_init(struct rfm12_data* dev_data)
 	return err;	
 }
 
-static int platform_irq_cleanup(struct rfm12_data* dev_data)
+static int
+platform_irq_cleanup(struct rfm12_data* dev_data)
 {
 	int err = 0;
 	
@@ -280,7 +297,8 @@ static int platform_irq_cleanup(struct rfm12_data* dev_data)
 	return err;
 }
 
-static int am33xx_register_spi_device(struct rfm12_data* dev_data)
+static int
+am33xx_register_spi_device(struct rfm12_data* dev_data)
 {
 	int err = 0;
 	struct spi_master* spi_master;
@@ -362,7 +380,8 @@ errReturn:
 	return err;
 }
 
-static int am33xx_deregister_spi_device(struct rfm12_data* dev_data)
+static int
+am33xx_deregister_spi_device(struct rfm12_data* dev_data)
 {
 	if (NULL != am33xx_conf.spi_device) {
 		spi_unregister_device(am33xx_conf.spi_device);
