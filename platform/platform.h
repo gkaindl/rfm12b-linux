@@ -10,6 +10,9 @@ static int
 platform_irq_init(void* ctx);
 
 static int
+platform_irq_handled(void* ctx);
+
+static int
 platform_irq_cleanup(void* ctx);
 
 #endif

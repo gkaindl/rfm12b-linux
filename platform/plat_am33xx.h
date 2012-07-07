@@ -1,6 +1,7 @@
 #include <linux/ioport.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/spi/spi.h>
 #include <asm/io.h>
 #include <mach/gpio.h>
@@ -20,14 +21,15 @@
 
 static const u16 am33xx_irq_pin = 115;	// gpio3_19
 static const u16 am33xx_spi_bus = 2;	// spi port on bbone header
-static const u16 am33xx_spi_cs	= 1;	// CS 0
+static const u16 am33xx_spi_cs	= 1;	// CS 1
 
 struct am33xx_config {
 	u16 irq;
 	struct spi_device* spi_device;
 	struct {
-		u8 irq_active:1;
 		u8 gpio_claimed:1;
+		u8 irq_claimed:1;
+		u8 irq_enabled:1;
 	} state;
 };
 
@@ -63,14 +65,14 @@ static struct am33xx_pin_config am33xx_pin_configs[] = {
 		// beaglebone pin p9/30 (mcasp0_axr0)
 		//		set as SPI1_D1 (mode 3), PULLUP ENABLED, INPUT ENABLED
 		.pin_addr = AM33XX_CONTROL_BASE + 0x998,
-		.settings = 0x3 | (2 << 3) | (1 << 5),
+		.settings = 0x3 | (0 << 3) | (1 << 5),
 		.claimed = 0
 	},
 	{
 		// beaglebone pin p9/31 (mcasp0_aclkx)
 		//		set as SPI1_SCLK (mode 3), PULLUP ENABLED, INPUT DISABLED
 		.pin_addr = AM33XX_CONTROL_BASE + 0x990,
-		.settings = 0x3 | (2 << 3),
+		.settings = 0x3 | (0 << 3) | (1 << 5),
 		.claimed = 0
 	},
 	{ 0, 0}
@@ -99,7 +101,29 @@ am33xx_deregister_spi_device(void);
 static irqreturn_t
 am33xx_irq_handler(int irq, void* dev_id)
 {
+	if (am33xx_conf.state.irq_enabled) {
+		am33xx_conf.state.irq_enabled = 0;
+		disable_irq_nosync(am33xx_conf.irq);
+	}
+	
+	rfm12_handle_interrupt((struct rfm12_data*)dev_id);
+	
 	return IRQ_HANDLED;
+}
+
+static int
+platform_irq_handled(void* ctx)
+{
+	if (0 == am33xx_conf.state.irq_enabled) {
+		if (0 == gpio_get_value(am33xx_irq_pin))
+			rfm12_handle_interrupt((struct rfm12_data*)ctx);
+		else {
+			am33xx_conf.state.irq_enabled = 1;
+			enable_irq(am33xx_conf.irq);
+		}
+	}
+
+	return 0;
 }
 
 static int
@@ -254,24 +278,28 @@ platform_irq_init(void* ctx)
 {
 	int err;
 	
-	if (am33xx_conf.state.irq_active) return -EBUSY;
+	if (am33xx_conf.state.irq_claimed) return -EBUSY;
 	
 	err = request_irq(
 		am33xx_conf.irq,
 		am33xx_irq_handler,
-		IRQF_DISABLED,
+		IRQF_TRIGGER_FALLING | IRQF_DISABLED,
 		RFM12B_DRV_NAME,
 		ctx
 	);
 	
-	if (0 == err)
-		am33xx_conf.state.irq_active = 1;
-	else
+	if (0 == err) {
+		am33xx_conf.state.irq_claimed = 1;
+		am33xx_conf.state.irq_enabled = 1;
+	} else
 		printk(
 			KERN_ALERT RFM12B_DRV_NAME
 			" : unable to activate IRQ %u: %i.\n",
 			am33xx_conf.irq, err
 		);
+	
+	if (0 == gpio_get_value(am33xx_irq_pin))
+		am33xx_irq_handler(am33xx_conf.irq, ctx);
 	
 	return err;	
 }
@@ -281,9 +309,9 @@ platform_irq_cleanup(void* ctx)
 {
 	int err = 0;
 		
-	if (am33xx_conf.state.irq_active) {
+	if (am33xx_conf.state.irq_claimed) {
 		free_irq(am33xx_conf.irq, ctx);
-		am33xx_conf.state.irq_active = 0;
+		am33xx_conf.state.irq_claimed = 0;
 	}
 	
 	return err;
@@ -349,6 +377,7 @@ am33xx_register_spi_device(void)
 	spi_device->max_speed_hz = RFM12B_SPI_MAX_HZ;
 	spi_device->mode = RFM12B_SPI_MODE;
 	spi_device->bits_per_word = RFM12B_SPI_BITS;
+	spi_device->chip_select = am33xx_spi_cs;
 	spi_device->irq = -1; /* we do our own interrupt handling */
 	spi_device->controller_state = NULL;
 	spi_device->controller_data = NULL;

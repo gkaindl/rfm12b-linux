@@ -35,7 +35,8 @@ int main(int argc, char** argv)
 			"\nsuccessfully opened %s as fd %i, entering read loop...\n\n",
 			devname, fd
 		);
-	
+
+	fflush(stdout);
 	signal(SIGINT, sig_handler);
 	
 	pkt_cnt = 0;
@@ -54,6 +55,8 @@ int main(int argc, char** argv)
 			}
 			printf("\n");
 			
+			fflush(stdout);	
+	
 			pkt_cnt++;
 		} else if (len < 0) {
 			break;
