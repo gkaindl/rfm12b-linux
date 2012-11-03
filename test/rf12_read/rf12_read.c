@@ -48,13 +48,12 @@ void print_stats(int fd)
 			"\tout_buf: %p\n"
 			"\tout_buf_pos: %p\n"
 			"\tin_cur_len_pos: %p\n"
-			"\tout_cur_len_pos: %p\n"
 			"\tin_cur_end: %p\n"
 			"\tout_cur_end: %p\n"
 			"\tin_cur_num_bytes: %i\n"
 			"\tout_cur_num_bytes: %i\n",
 			s.in_buf, s.in_buf_pos, s.out_buf, s.out_buf_pos,
-			s.in_cur_len_pos, s.out_cur_len_pos,
+			s.in_cur_len_pos,
 			s.in_cur_end, s.out_cur_end,
 			s.in_cur_num_bytes, s.out_cur_num_bytes
 		);

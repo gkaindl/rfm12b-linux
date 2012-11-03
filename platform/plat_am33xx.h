@@ -1,3 +1,6 @@
+#if !defined(__RFM12_PLAT_AM33XX_H__)
+#define __RFM12_PLAT_AM33XX_H__
+
 #include <linux/ioport.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
@@ -413,3 +416,5 @@ am33xx_deregister_spi_device(void)
 	
 	return 0;
 }
+
+#endif // __RFM12_PLAT_AM33XX_H__

@@ -10,15 +10,13 @@
 #include <linux/poll.h>
 #include <linux/spi/spi.h>
 
+#include "rfm12b_config.h"
 #include "rfm12b_ioctl.h"
-
-#define RFM12B_DRV_NAME		"rfm12"
 
 #define RFM12B_SPI_MAX_HZ	2500000
 #define RFM12B_SPI_MODE		0
 #define RFM12B_SPI_BITS		8
 
-#define RFM12_NAME        	"rfm12"
 #define RFM12_SPI_MAJOR    	154
 #define RFM12_N_SPI_MINORS  32
 
@@ -37,14 +35,17 @@
 #define RF_STATUS_BIT_FFIT_RGIT		(0x8000)
 
 #define RF_MAX_DATA_LEN    66
+// 4 : 1 byte hdr, 1 byte len, 2 bytes crc16 (see JeeLib)
 #define RF_EXTRA_LEN	   4
 #define RF_MAX_LEN		   (RF_MAX_DATA_LEN+RF_EXTRA_LEN)
 
 #define OPEN_WAIT_MILLIS   (50)
 
 #define READ_FIFO_WAIT              (0)
+#define WRITE_TX_WAIT				(0)
 
 #define RXTX_WATCHDOG_JIFFIES       (HZ/4)
+#define TRYSEND_RETRY_JIFFIES		(HZ/16)
 
 #define DATA_BUF_SIZE            (512)
 #define NUM_MAX_CONCURRENT_MSG   (3)
@@ -60,21 +61,31 @@ typedef enum _rfm12_state_t {
    RFM12_STATE_NO_CHANGE		= 0,
    RFM12_STATE_CONFIG			= 1,
    RFM12_STATE_SLEEP			= 2,
-   RFM12_STATE_LISTEN			= 3,
-   RFM12_STATE_RECV				= 4,
-   RFM12_STATE_RECV_FINISH		= 5,
-   RFM12_STATE_SEND_START		= 6,
-   RFM12_STATE_SEND				= 7
+   RFM12_STATE_IDLE				= 3,
+   RFM12_STATE_LISTEN			= 4,
+   RFM12_STATE_RECV				= 5,
+   RFM12_STATE_RECV_FINISH		= 6,
+   RFM12_STATE_SEND_PRE1	    = 7,
+   RFM12_STATE_SEND_PRE2		= 8,
+   RFM12_STATE_SEND_PRE3		= 9,
+   RFM12_STATE_SEND_SYN1		= 10,
+   RFM12_STATE_SEND_SYN2	    = 11,
+   RFM12_STATE_SEND				= 12,
+   RFM12_STATE_SEND_TAIL1		= 13,
+   RFM12_STATE_SEND_TAIL2		= 14,
+   RFM12_STATE_SEND_TAIL3		= 15
 } rfm12_state_t;
 
 struct rfm12_spi_message {
    struct spi_message   spi_msg;
-   struct spi_transfer  spi_transfers[2];
+   struct spi_transfer  spi_transfers[4];
    rfm12_state_t        spi_finish_state;
-   u8                   spi_tx[4], spi_rx[4];
+   u8                   spi_tx[8], spi_rx[8];
    void*                context;
    u8                   pos;
 };
+
+// TODO: rename the stats field to recv_ and send_
 
 struct rfm12_data {
 	u16					irq;
@@ -90,9 +101,10 @@ struct rfm12_data {
 	unsigned long        bytes_recvd, pkts_recvd;
 	unsigned long        bytes_sent, pkts_sent;
 	unsigned long        num_overflows, num_timeouts, num_crc16_fail;
+	unsigned long		 num_send_underruns, num_send_timeouts;
 	u8*                  in_buf, *in_buf_pos;
 	u8*                  out_buf, *out_buf_pos;
-	u8*                  in_cur_len_pos, *out_cur_len_pos;
+	u8*                  in_cur_len_pos;
 	u8*                  in_cur_end, *out_cur_end;
 	u16					 crc16, last_status;
 	int                  in_cur_num_bytes, out_cur_num_bytes;
@@ -100,6 +112,8 @@ struct rfm12_data {
 	u8                   free_spi_msgs;
 	struct timer_list    rxtx_watchdog;
 	u8                   rxtx_watchdog_running;
+	struct timer_list	 retry_sending_timer;
+	u8					 retry_sending_running;
 };
 
 // forward declarations
@@ -109,6 +123,12 @@ static int
 rfm12_request_fifo_byte(struct rfm12_data* rfm12);
 static int
 rfm12_finish_receiving(struct rfm12_data* rfm12, int skip_packet);
+static int
+rfm12_finish_sending(struct rfm12_data* rfm12, int success);
+static void
+rfm12_begin_sending_or_receiving(struct rfm12_data* rfm12);
+static int
+rfm12_try_sending(struct rfm12_data* rfm12);
 
 #include "platform/platform.h"
 #include "platform/plat_am33xx.h"
@@ -212,7 +232,7 @@ rfm12_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
 								 void (*callback)(void*),
 								 rfm12_state_t finish_state)
 {
-   int err;
+   int err, i;
    struct rfm12_spi_message* spi_msg;   
 
    spi_msg = rfm12_claim_spi_message(rfm12);
@@ -232,13 +252,15 @@ rfm12_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
 	  rfm12_control_spi_transfer(spi_msg, 0, cmds[0]);
 
    if (num_cmds > 1) {
-	  spi_msg->spi_transfers[0].cs_change = 1;
-	  spi_msg->spi_transfers[0].delay_usecs = delay_usecs;
-	  spi_message_add_tail(&spi_msg->spi_transfers[0], &spi_msg->spi_msg);
-
-	  spi_msg->spi_transfers[1] =
-		   rfm12_control_spi_transfer(spi_msg, 1, cmds[1]);
-	   spi_message_add_tail(&spi_msg->spi_transfers[1], &spi_msg->spi_msg);
+	  for (i=1; i<num_cmds; i++) {
+		  spi_msg->spi_transfers[i-1].cs_change = 1;
+		  spi_msg->spi_transfers[i-1].delay_usecs = delay_usecs;
+		  spi_message_add_tail(&spi_msg->spi_transfers[i-1], &spi_msg->spi_msg);
+	
+		  spi_msg->spi_transfers[i] =
+			   rfm12_control_spi_transfer(spi_msg, i, cmds[i]);
+		   spi_message_add_tail(&spi_msg->spi_transfers[i], &spi_msg->spi_msg);
+	  }
    } else
 	  spi_message_add_tail(&spi_msg->spi_transfers[0], &spi_msg->spi_msg);
 
@@ -284,14 +306,6 @@ rfm12_start_receiving(struct rfm12_data* rfm12)
    }
 
    return err;
-}
-
-static int
-rfm12_start_sending(struct rfm12_data* rfm12)
-{
-   uint16_t cmd = RF_XMITTER_ON;
-   return rfm12_send_generic_async_cmd(rfm12, &cmd, 1, 0,
-	  NULL, RFM12_STATE_SEND);
 }
 
 static int
@@ -416,6 +430,7 @@ rfm12_setup(struct rfm12_data* rfm12)
    }
 
 pError:
+   rfm12->state = RFM12_STATE_IDLE;
 
    return err;
 }
@@ -428,12 +443,14 @@ rfm12_rxtx_watchdog_expired(unsigned long ptr)
 
    spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
-   printk(KERN_INFO RFM12B_DRV_NAME
-   	  ": rxtx watchdog expired with state: %d", rfm12->state);
-
-   if (RFM12_STATE_RECV == rfm12->state) {
+   if (RFM12_STATE_RECV >= rfm12->state &&
+   		RFM12_STATE_LISTEN <= rfm12->state) {
 	  rfm12->num_timeouts++;
 	  (void)rfm12_finish_receiving(rfm12, 1);
+   } else if (RFM12_STATE_SEND_PRE1 <= rfm12->state &&
+        RFM12_STATE_SEND_TAIL3 >= rfm12->state) {
+	  rfm12->num_send_timeouts++;
+	  (void)rfm12_finish_sending(rfm12, 0);        
    }
 
    rfm12->rxtx_watchdog_running = 0;
@@ -452,7 +469,7 @@ rfm12_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer)
 	  } else
 		 mod_timer(&rfm12->rxtx_watchdog,
 			jiffies + RXTX_WATCHDOG_JIFFIES);
-   } else {
+   } else if (!cancelTimer) {
 	  init_timer(&rfm12->rxtx_watchdog);
 	  rfm12->rxtx_watchdog.expires = jiffies + RXTX_WATCHDOG_JIFFIES;
 	  rfm12->rxtx_watchdog.data = (unsigned long)rfm12;
@@ -463,7 +480,7 @@ rfm12_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer)
 }
 
 static void
-rfm12_finish_recv_callback(void *arg)
+rfm12_finish_send_or_recv_callback(void *arg)
 {
    unsigned long flags;
    struct rfm12_spi_message* spi_msg =
@@ -475,7 +492,7 @@ rfm12_finish_recv_callback(void *arg)
 
    rfm12_spi_completion_common(spi_msg);
  
-   (void)rfm12_start_receiving(rfm12);
+   rfm12_begin_sending_or_receiving(rfm12);
 
    spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
    
@@ -483,9 +500,23 @@ rfm12_finish_recv_callback(void *arg)
 }
 
 static int
+rfm12_finish_send_recv_common(struct rfm12_data* rfm12)
+{
+	uint16_t cmds[3];
+	
+	cmds[0] = RF_READ_STATUS;
+	cmds[1] = RF_IDLE_MODE;
+	cmds[2] = RF_TXREG_WRITE | 0xAA;
+	
+	rfm12->state = RFM12_STATE_IDLE;
+	
+	return rfm12_send_generic_async_cmd(rfm12, cmds, 3,
+		0, rfm12_finish_send_or_recv_callback, RFM12_STATE_NO_CHANGE);
+}
+
+static int
 rfm12_finish_receiving(struct rfm12_data* rfm12, int skip_packet)
 {
-   uint16_t cmds[2];
    int err = 0, num_bytes;
 
    if (RFM12_STATE_RECV == rfm12->state) {
@@ -509,14 +540,36 @@ rfm12_finish_receiving(struct rfm12_data* rfm12, int skip_packet)
 		  
 		 rfm12->in_buf_pos = rfm12->in_cur_end;
 	  }
-
-	  cmds[0] = RF_READ_STATUS;
-	  cmds[1] = RF_IDLE_MODE;
-
-	  err = rfm12_send_generic_async_cmd(rfm12, cmds, 2,
-			   0, rfm12_finish_recv_callback, RFM12_STATE_NO_CHANGE);
+	  
+	  err = rfm12_finish_send_recv_common(rfm12);
    }
 
+   return err;
+}
+
+static int
+rfm12_finish_sending(struct rfm12_data* rfm12, int success)
+{
+   int err = 0, len = 0;
+   
+   rfm12_update_rxtx_watchdog(rfm12, 1);
+      
+   if (success) {
+	   len = rfm12->out_buf[1] + RF_EXTRA_LEN;
+	   
+	   memmove(rfm12->out_buf,
+	   		   rfm12->out_buf + len,
+	   		   DATA_BUF_SIZE - len
+	   );
+	   
+	   rfm12->out_cur_end -= len;
+	   rfm12->out_buf_pos = rfm12->out_buf;
+	   
+	   wake_up_interruptible(&rfm12_wait_write);
+   }
+   
+   err = rfm12_finish_send_recv_common(rfm12);
+   
    return err;
 }
 
@@ -543,6 +596,9 @@ rfm12_recv_spi_completion_handler(void *arg)
    valid_interrupt =
    		((status & RF_STATUS_BIT_FFIT_RGIT) && !(status & RF_STATUS_BIT_FFEM)) ||
    		(status & RF_STATUS_BIT_FFOV_RGUR);
+   	
+   if (valid_interrupt && RFM12_STATE_LISTEN == rfm12->state)
+   	   rfm12->state = RFM12_STATE_RECV;
 
    if (valid_interrupt) {
 	   if (NULL != rfm12->in_buf) {
@@ -584,13 +640,87 @@ rfm12_recv_spi_completion_handler(void *arg)
 	
 	   if ((status & RF_STATUS_BIT_FFOV_RGUR) && !packet_finished) {
 		  rfm12->num_overflows++;
-		  (void)rfm12_finish_receiving(rfm12, 1);
+		  if (DROP_PACKET_ON_FFOV)
+		  	(void)rfm12_finish_receiving(rfm12, 1);
 	   }
    }
 
    spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
    
-   if (!valid_interrupt || (!packet_finished && !(status & RF_STATUS_BIT_FFOV_RGUR)))
+   if (!valid_interrupt ||
+   	  (!packet_finished && (DROP_PACKET_ON_FFOV && !(status & RF_STATUS_BIT_FFOV_RGUR))))
+   	   platform_irq_handled((void*)rfm12);
+}
+
+static void
+rfm12_send_spi_completion_handler(void *arg)
+{
+   unsigned long flags;
+   uint16_t status, valid_interrupt = 0, packet_finished = 0;
+   struct rfm12_spi_message* spi_msg =
+	  (struct rfm12_spi_message*)arg; 
+   struct rfm12_data* rfm12 =
+	  (struct rfm12_data*)spi_msg->context;
+
+   spin_lock_irqsave(&rfm12->rfm12_lock, flags);
+
+   rfm12_spi_completion_common(spi_msg);
+
+   status = (spi_msg->spi_rx[0] << 8) | spi_msg->spi_rx[1];
+   rfm12->last_status = status;
+
+   valid_interrupt =
+   		((status & RF_STATUS_BIT_FFIT_RGIT) || (status & RF_STATUS_BIT_FFOV_RGUR));
+
+   // TODO: so, what's up with RGUR?
+   if (valid_interrupt && NULL != rfm12->out_buf) {
+	   if (RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR)) {
+		   packet_finished = 1;
+		   rfm12->num_send_underruns++;
+		   (void)rfm12_finish_sending(rfm12, 0);
+	   } else {
+		   if (!RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR))
+		   	   rfm12->num_send_underruns++;
+		   
+		   switch(rfm12->state) {
+			   case RFM12_STATE_SEND_PRE1:
+			   	  rfm12->out_buf_pos = rfm12->out_buf;
+			   	  rfm12->out_cur_num_bytes = rfm12->out_buf_pos[1] + RF_EXTRA_LEN;
+			   case RFM12_STATE_SEND_PRE2:
+			   case RFM12_STATE_SEND_PRE3:
+			   case RFM12_STATE_SEND_SYN1:
+			   case RFM12_STATE_SEND_SYN2:
+			   case RFM12_STATE_SEND_TAIL1:
+			   case RFM12_STATE_SEND_TAIL2:
+			   	  rfm12->state++;
+			   	  break;
+			   case RFM12_STATE_SEND:
+			      rfm12->out_cur_num_bytes--;
+			      
+			      if (0 == rfm12->out_cur_num_bytes) {
+				      rfm12->state = RFM12_STATE_SEND_TAIL1;
+			      }
+			      
+			      break;
+			   case RFM12_STATE_SEND_TAIL3:
+			   	  packet_finished = 1;
+			   	  (void)rfm12_finish_sending(rfm12, 1);
+			   	  break;
+			   default:
+			      // should never happen
+			      packet_finished = 1;
+			      (void)rfm12_finish_sending(rfm12, 0);
+			      break;
+		   }
+		   
+		   if (!packet_finished)
+		   	   rfm12_update_rxtx_watchdog(rfm12, 0);
+   	   }
+   }
+
+   spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+
+   if (!valid_interrupt || !packet_finished)
    	   platform_irq_handled((void*)rfm12);
 }
 
@@ -607,6 +737,34 @@ rfm12_request_fifo_byte(struct rfm12_data* rfm12)
 	  RFM12_STATE_NO_CHANGE);
 }
 
+static int
+rfm12_write_tx_byte(struct rfm12_data* rfm12, u8 tx_byte)
+{
+	uint16_t cmds[2];
+	
+	cmds[0] = RF_READ_STATUS;
+	cmds[1] = RF_TXREG_WRITE | tx_byte;
+	
+	return rfm12_send_generic_async_cmd(rfm12, cmds, 2,
+		WRITE_TX_WAIT, rfm12_send_spi_completion_handler,
+		RFM12_STATE_NO_CHANGE);
+}
+
+static void
+rfm12_trysend_retry_timer_expired(unsigned long ptr)
+{
+   unsigned long flags;
+   struct rfm12_data* rfm12 = (struct rfm12_data*)ptr;
+
+   spin_lock_irqsave(&rfm12->rfm12_lock, flags);
+
+   if (rfm12->retry_sending_running)
+   	  rfm12_try_sending(rfm12);
+
+   rfm12->retry_sending_running = 0;
+   spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+}
+
 static void
 rfm12_trysend_completion_handler(void *arg)
 {
@@ -619,14 +777,16 @@ rfm12_trysend_completion_handler(void *arg)
 
    spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
+   rfm12->retry_sending_running = 0;
+
    rfm12_spi_completion_common(spi_msg);
 
    status = (spi_msg->spi_rx[0] << 8) | spi_msg->spi_rx[1];
 
    rfm12->last_status = status;
    
-   if (RFM12_STATE_LISTEN == rfm12->state &&
-       status & RF_STATUS_BIT_RSSI) {
+   if (RFM12_STATE_IDLE == rfm12->state &&
+       0 == (status & RF_STATUS_BIT_RSSI)) {
 	   uint16_t cmd[4];
 	   
 	   cmd[0] = RF_IDLE_MODE;
@@ -634,26 +794,93 @@ rfm12_trysend_completion_handler(void *arg)
 	   cmd[2] = RF_RX_FIFO_READ;
 	   cmd[3] = RF_XMITTER_ON;
 	   
-	   rfm12->state = RFM12_STATE_SEND_START;
+	   rfm12->state = RFM12_STATE_SEND_PRE1;
+	   
+	   rfm12_update_rxtx_watchdog(rfm12, 0);
 	   
 	   rfm12_send_generic_async_cmd(rfm12, cmd, 4,
 	   	   0, NULL, RFM12_STATE_NO_CHANGE);
+   } else {
+	   // try again a bit later...
+	   init_timer(&rfm12->retry_sending_timer);
+	   rfm12->retry_sending_timer.expires = jiffies + TRYSEND_RETRY_JIFFIES;
+	   rfm12->retry_sending_timer.data = (unsigned long)rfm12;
+	   rfm12->retry_sending_timer.function = rfm12_trysend_retry_timer_expired;
+	   add_timer(&rfm12->retry_sending_timer);
+	   rfm12->retry_sending_running = 1;
    }
 
    spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
 }
 
+// 0 ... nothing to send, can go to listen state
+// 1 ... something needs sending, don't go to listen state
 static int
 rfm12_try_sending(struct rfm12_data* rfm12)
-{
-	if (RFM12_STATE_LISTEN == rfm12->state) {
+{	
+	unsigned long flags;
+	int retval = 0;
+	
+	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
+	
+	if (NULL != rfm12->out_buf && rfm12->out_cur_end != rfm12->out_buf) {
 		uint16_t cmd = RF_READ_STATUS;
 		
-		return rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
+		(void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
 			0, rfm12_trysend_completion_handler, RFM12_STATE_NO_CHANGE);
+		
+		retval = 1;
 	}
 	
-	return 0;
+	spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+	
+	return retval;
+}
+
+static void
+rfm12_begin_sending_or_receiving(struct rfm12_data* rfm12)
+{	
+	if (RFM12_STATE_IDLE == rfm12->state) {
+		if (!rfm12_try_sending(rfm12))
+			rfm12_start_receiving(rfm12);
+	}
+}
+
+static void
+rfm12_stop_listening_and_send_callback(void *arg)
+{
+   unsigned long flags;
+   struct rfm12_spi_message* spi_msg =
+	  (struct rfm12_spi_message*)arg; 
+   struct rfm12_data* rfm12 =
+	  (struct rfm12_data*)spi_msg->context;
+
+   spin_lock_irqsave(&rfm12->rfm12_lock, flags);
+
+   rfm12_spi_completion_common(spi_msg);
+   
+   rfm12_begin_sending_or_receiving(rfm12);
+
+   spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+}
+
+static int
+rfm12_stop_listening_and_send(struct rfm12_data* rfm12)
+{
+	uint16_t cmd[2];
+	int err = 0;
+
+	if (RFM12_STATE_LISTEN == rfm12->state) {
+		cmd[0] = RF_IDLE_MODE;
+		cmd[1] = RF_READ_STATUS;
+		
+		rfm12->state = RFM12_STATE_IDLE;
+		
+		err = rfm12_send_generic_async_cmd(rfm12, cmd, 2,
+			0, rfm12_stop_listening_and_send_callback, RFM12_STATE_NO_CHANGE);
+	}
+	
+	return err;
 }
 
 // this should only be called from an interrupt context
@@ -664,14 +891,38 @@ rfm12_handle_interrupt(struct rfm12_data* rfm12)
 
    switch (rfm12->state) {
 	  case RFM12_STATE_LISTEN:
-	  	 rfm12->state = RFM12_STATE_RECV;
 	  case RFM12_STATE_RECV:
 		 (void)rfm12_request_fifo_byte(rfm12);
 		 break;
-
-	  default:
-	  	 // this should never be reached.
+	  case RFM12_STATE_SEND_PRE1:
+	  case RFM12_STATE_SEND_PRE2:
+	  case RFM12_STATE_SEND_PRE3:
+	  case RFM12_STATE_SEND_TAIL1:
+	  case RFM12_STATE_SEND_TAIL2:
+	     (void)rfm12_write_tx_byte(rfm12, 0xAA);
+	     break;
+	  case RFM12_STATE_SEND_TAIL3: {
+		uint16_t cmd = RF_IDLE_MODE;
+	  	(void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1, 0,
+	  		NULL, RFM12_STATE_NO_CHANGE);
+	  	(void)rfm12_write_tx_byte(rfm12, 0xAA);
+	  	break;
+	  }
+	  case RFM12_STATE_SEND_SYN1:
+	  	 (void)rfm12_write_tx_byte(rfm12, 0x2D);
+	  	 break;
+	  case RFM12_STATE_SEND_SYN2:
+	  	 (void)rfm12_write_tx_byte(rfm12, rfm12->group_id);
+	  	 break;
+	  case RFM12_STATE_SEND:
+	     (void)rfm12_write_tx_byte(rfm12, *rfm12->out_buf_pos++);
+	     break;
+	  default: {
+		 uint16_t cmd = RF_READ_STATUS; 
+		 (void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
+		 	0, NULL, RFM12_STATE_NO_CHANGE);
 		 break;
+	  }
    }
 
    spin_unlock(&rfm12->rfm12_lock);
@@ -729,9 +980,9 @@ size_t count, loff_t *f_pos)
 
 	bytes_to_copy = (RF_MAX_DATA_LEN < count) ? RF_MAX_DATA_LEN : count;
 	
-	if (DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) < bytes_to_copy + 4)
+	if (DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) < bytes_to_copy + RF_EXTRA_LEN)
 		wait_event_interruptible(rfm12_wait_write,
-			DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= bytes_to_copy + 4);
+			DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= bytes_to_copy + RF_EXTRA_LEN);
 
 	copied = bytes_to_copy - copy_from_user(
 		rfm12->out_cur_end+2,
@@ -741,30 +992,34 @@ size_t count, loff_t *f_pos)
 
 	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
-	// TODO: fill in header
-	// TODO: setup crc16
-	
 	// header: we keep this at 0, meaning "broadcast from node 0" in jeenode speak
 	//   that way. any flow control etc... has to be implemented by the client app,
 	//   but we're still compatible with the jeenode format.
 	*rfm12->out_cur_end++ = 0;
 	
 	// length field
-	*rfm12->out_cur_end++ = copied + 3;
+	*rfm12->out_cur_end++ = (u8)copied;
 	
-	crc16 = rfm12_crc16_update(~0, rfm12->group_id);
-	for (i=0; i<copied; i++)
+	crc16 = ~0;
+	if (0 != rfm12->group_id)
+		crc16 = rfm12_crc16_update(~0, rfm12->group_id);
+	for (i=-2; i<copied; i++)
 		crc16 = rfm12_crc16_update(crc16, rfm12->out_cur_end[i]);
-	
+
+		
 	rfm12->out_cur_end += copied;
 	
 	// crc16
-	*rfm12->out_cur_end++ = crc16 & 0xF;
-	*rfm12->out_cur_end++ = (crc16 >> 8) & 0xF;
+	*rfm12->out_cur_end++ = crc16 & 0xFF;
+	*rfm12->out_cur_end++ = (crc16 >> 8) & 0xFF;
+
+    if (RFM12_STATE_IDLE == rfm12->state) {
+    	rfm12_begin_sending_or_receiving(rfm12);
+    } else if (RFM12_STATE_LISTEN == rfm12->state) {
+	    rfm12_stop_listening_and_send(rfm12);
+    }
 
 	spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
-
-	// TODO: start sending!
 
 	return copied;
 }
@@ -798,7 +1053,6 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		   s.out_buf = rfm12->out_buf;
 		   s.out_buf_pos = rfm12->out_buf_pos;
 		   s.in_cur_len_pos = rfm12->in_cur_len_pos;
-		   s.out_cur_len_pos = rfm12->out_cur_len_pos;
 		   s.in_cur_end = rfm12->in_cur_end;
 		   s.out_cur_end = rfm12->out_cur_end;
 		   s.in_cur_num_bytes = rfm12->in_cur_num_bytes;
@@ -876,18 +1130,22 @@ rfm12_open(struct inode *inode, struct file *filp)
 		 rfm12->num_overflows = 0;
 		 rfm12->num_timeouts = 0;
 		 rfm12->num_crc16_fail = 0;
+		 rfm12->num_send_underruns = 0;
+		 rfm12->num_send_timeouts = 0;
 		 rfm12->in_cur_num_bytes = 0;
 		 rfm12->rxtx_watchdog_running = 0;
+		 rfm12->retry_sending_running = 0;
 		 rfm12->crc16 = 0;
 		 rfm12->last_status = 0;
 		 rfm12->in_cur_len_pos = rfm12->in_buf;
 		 rfm12->in_cur_end = rfm12->in_buf;
+		 rfm12->out_cur_end = rfm12->out_buf;
 	  }
 
 	  spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
 
 	  if (0 == err)
-		 err = rfm12_start_receiving(rfm12);
+		 rfm12_begin_sending_or_receiving(rfm12);
 
 	  err = platform_irq_init((void*)rfm12);
 	  has_irq = (0 == err);
