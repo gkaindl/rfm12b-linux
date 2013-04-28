@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
@@ -12,6 +13,17 @@
 
 #include "rfm12b_config.h"
 #include "rfm12b_ioctl.h"
+
+static u8 group_id			= 211;
+static u8 band_id			= 2;
+
+module_param(group_id, byte, 0000);
+MODULE_PARM_DESC(group_id,
+	"group ID for rfm12b modules. can be changed per board via ioctl().");
+module_param(band_id, byte, 0000);
+MODULE_PARM_DESC(band_id,
+	"band ID for rfm12b modules. can be changed per board via ioctl(). "
+	"0 .. 315mhz; 1 .. 433mhz; 2 .. 868mhz; 3 .. 915mhz");
 
 #define RFM12B_SPI_MAX_HZ	2500000
 #define RFM12B_SPI_MODE		0
@@ -84,8 +96,6 @@ struct rfm12_spi_message {
    void*                context;
    u8                   pos;
 };
-
-// TODO: rename the stats field to recv_ and send_
 
 struct rfm12_data {
 	u16					 irq;
@@ -344,9 +354,8 @@ rfm12_setup(struct rfm12_data* rfm12)
    u8 tx_buf[26];
    int err;
 
-   // TODO: make me configurable
-   rfm12->group_id = 211;
-   rfm12->band_id = 2;
+   rfm12->group_id = group_id;
+   rfm12->band_id = band_id;
 
    rfm12->state = RFM12_STATE_CONFIG;
 
@@ -447,6 +456,10 @@ rfm12_setup(struct rfm12_data* rfm12)
 
 	  err = spi_sync(rfm12->spi, &msg);
    }
+
+	printk(KERN_INFO RFM12B_DRV_NAME
+	    ": transceiver %d settings now: group id %d, band id %d.\n",
+	    rfm12->irq_identifier, rfm12->group_id, rfm12->band_id);
 
 pError:
    rfm12->state = RFM12_STATE_IDLE;
