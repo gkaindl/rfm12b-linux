@@ -30,13 +30,6 @@ MODULE_PARM_DESC(bit_rate,
 	"bit rate setting byte for rfm12b modules (see datasheet). "
 	"can be changed per board via ioctl().");
 
-#define RFM12B_SPI_MAX_HZ	2500000
-#define RFM12B_SPI_MODE		0
-#define RFM12B_SPI_BITS		8
-
-#define RFM12_SPI_MAJOR    	154
-#define RFM12_N_SPI_MINORS  32
-
 #define RF_READ_STATUS     0x0000
 #define RF_IDLE_MODE       0x820D
 #define RF_SLEEP_MODE      0x8205
@@ -150,9 +143,6 @@ static int
 rfm12_try_sending(struct rfm12_data* rfm12);
 static void
 rfm12_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer);
-
-#include "platform/platform.h"
-#include "platform/plat_am33xx.h"
 
 static struct rfm12_spi_message*
 rfm12_claim_spi_message(struct rfm12_data* rfm12)

@@ -19,4 +19,16 @@ platform_irq_handled(int identifier);
 static int
 platform_irq_cleanup(int identifier);
 
+
+struct am33xx_board_config {
+	u16 irq_pin;
+	u16 spi_bus;
+	u16 spi_cs;
+};
+
+struct rfm12_data;
+
+static void
+rfm12_handle_interrupt(struct rfm12_data* rfm12);
+
 #endif

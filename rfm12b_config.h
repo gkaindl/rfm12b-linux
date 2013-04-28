@@ -32,4 +32,15 @@
 #define DROP_PACKET_ON_FFOV		1
 #define RETRY_SEND_ON_RGUR		0
 
+#define RFM12B_SPI_MAX_HZ	2500000
+#define RFM12B_SPI_MODE		0
+#define RFM12B_SPI_BITS		8
+
+#define RFM12_SPI_MAJOR    	154
+#define RFM12_N_SPI_MINORS  32
+
+#include "platform/platform.h"
+#include "platform/plat_am33xx.h"
+#include "platform/plat_spi.h"
+
 #endif // __RFM12B_CONFIG_H__
