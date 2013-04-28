@@ -15,7 +15,8 @@
 #include "rfm12b_ioctl.h"
 
 static u8 group_id			= 211;
-static u8 band_id			= 2;
+static u8 band_id			= 2;	// 868mhz, set to 1 for 433mhz
+static u8 bit_rate			= 0x06;	// 49.2 kbit/s, like jeelib
 
 module_param(group_id, byte, 0000);
 MODULE_PARM_DESC(group_id,
@@ -23,7 +24,11 @@ MODULE_PARM_DESC(group_id,
 module_param(band_id, byte, 0000);
 MODULE_PARM_DESC(band_id,
 	"band ID for rfm12b modules. can be changed per board via ioctl(). "
-	"0 .. 315mhz; 1 .. 433mhz; 2 .. 868mhz; 3 .. 915mhz");
+	"1 .. 433mhz; 2 .. 868mhz; 3 .. 915mhz");
+module_param(bit_rate, byte, 0000);
+MODULE_PARM_DESC(bit_rate,
+	"bit rate setting byte for rfm12b modules (see datasheet). "
+	"can be changed per board via ioctl().");
 
 #define RFM12B_SPI_MAX_HZ	2500000
 #define RFM12B_SPI_MODE		0
@@ -61,6 +66,8 @@ MODULE_PARM_DESC(band_id,
 
 #define DATA_BUF_SIZE            (512)
 #define NUM_MAX_CONCURRENT_MSG   (3)
+
+#define BIT_RATE_FROM_BYTE(b)	(10000000/29/((b&0x7f)+1)/(1+(b&0x80)*7))
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
@@ -109,7 +116,7 @@ struct rfm12_data {
 	u8                   open;
 	u8					 should_release;
 	rfm12_state_t        state;
-	u8					 group_id, band_id;
+	u8					 group_id, band_id, bit_rate;
 	unsigned long        bytes_recvd, pkts_recvd;
 	unsigned long        bytes_sent, pkts_sent;
 	unsigned long        num_recv_overflows, num_recv_timeouts, num_recv_crc16_fail;
@@ -356,6 +363,7 @@ rfm12_setup(struct rfm12_data* rfm12)
 
    rfm12->group_id = group_id;
    rfm12->band_id = band_id;
+   rfm12->bit_rate = bit_rate;
 
    rfm12->state = RFM12_STATE_CONFIG;
 
@@ -391,7 +399,7 @@ rfm12_setup(struct rfm12_data* rfm12)
    tr2.cs_change = 1;
    spi_message_add_tail(&tr2, &msg);
 
-   tr3 = rfm12_make_spi_transfer(0xC606, tx_buf+4, NULL);
+   tr3 = rfm12_make_spi_transfer(0xC600 | rfm12->bit_rate, tx_buf+4, NULL);
    tr3.cs_change = 1;
    spi_message_add_tail(&tr3, &msg);
 
@@ -458,8 +466,9 @@ rfm12_setup(struct rfm12_data* rfm12)
    }
 
 	printk(KERN_INFO RFM12B_DRV_NAME
-	    ": transceiver %d settings now: group id %d, band id %d.\n",
-	    rfm12->irq_identifier, rfm12->group_id, rfm12->band_id);
+	    ": transceiver %d settings now: group %d, band %d, bit rate 0x%.2x (%d bps).\n",
+	    rfm12->irq_identifier, rfm12->group_id, rfm12->band_id,
+	    rfm12->bit_rate, BIT_RATE_FROM_BYTE(rfm12->bit_rate));
 
 pError:
    rfm12->state = RFM12_STATE_IDLE;
