@@ -4,15 +4,12 @@
 #include <time.h>
 #include <signal.h>
 #include <errno.h>
-#include <stdlib.h>
 
 #include "../common/common.h"
 #include "../../rfm12b_ioctl.h"
 
-#define PACKET_LEN		10
-#define SEND_DELAY		1000
-
 #define RF12_DEV		"/dev/rfm12.2.1"
+#define RF12_BUF_LEN	128
 
 static volatile int running;
 
@@ -24,11 +21,10 @@ void sig_handler(int signum)
 
 int main(int argc, char** argv)
 {
-	int fd, len, i, ppos;
+	int fd, len, i;
 	char* devname, buf[128];
 	unsigned long pkt_cnt;
 	time_t tt;
-	unsigned char* bytes = (unsigned char*)malloc(PACKET_LEN);
 	
 	devname = RF12_DEV;
 	
@@ -48,38 +44,37 @@ int main(int argc, char** argv)
 	
 	pkt_cnt = 0;
 	running = 1;
-	ppos = 0;
-	do {
-		for (i=0; i<PACKET_LEN; i++)
-			bytes[i] = (i + ppos) % 255;
-		ppos = (ppos + 1) % 255;
-		
-		len = write(fd, bytes, PACKET_LEN);
+	do {		
+		len = read(fd, buf, RF12_BUF_LEN);
 		
 		time (&tt);
 		
-		printf("%s", ctime(&tt));
-		printf("\t%i bytes written\n\t\t", len);
-		
-		for (i=0; i<PACKET_LEN; i++) {
-			printf("%d ", bytes[i]);
-		}
-		printf("\n");
-		
-		fflush(stdout);	
-		
-		pkt_cnt++;
-		
-		usleep(SEND_DELAY * 1000);
+		if (len > 0) {
+			printf("%s", ctime(&tt));
+			printf("\t%i bytes read\n\t\t", len);
+			
+			for (i=0; i<len; i++) {
+				printf("%d ", buf[i]);
+			}
+			printf("\n");
+			
+			fflush(stdout);	
+	
+			pkt_cnt++;
+						
+			len = write(fd, buf, len);
+			
+			printf("\techoed the packet with result: %d.\n", len);
+		} else if (len < 0) {
+			break;
+		}		
 	} while (running);
 	
 	print_stats(fd);
 	
 	close(fd);
 	
-	free(bytes);
-	
-	printf("\n\n%lu packet(s) sent.\n\n", pkt_cnt);
+	printf("\n\n%lu packet(s) echoed.\n\n", pkt_cnt);
 	
 	return len;
 }

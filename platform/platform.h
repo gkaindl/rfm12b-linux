@@ -8,12 +8,15 @@ static int
 platform_module_cleanup(void);
 
 static int
-platform_irq_init(void* ctx);
+platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs);
 
 static int
-platform_irq_handled(void* ctx);
+platform_irq_init(int identifier, void* rfm12_data);
 
 static int
-platform_irq_cleanup(void* ctx);
+platform_irq_handled(int identifier);
+
+static int
+platform_irq_cleanup(int identifier);
 
 #endif

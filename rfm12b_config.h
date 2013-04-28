@@ -26,6 +26,8 @@
   
   Note that even if the "drop packet" behavior is disabled, you are still
   protected against corrupted data by the internal CRC16 checksum.
+  
+  Tip: Leave this at defaults, unless you're actively investigating this.
 */
 #define DROP_PACKET_ON_FFOV		1
 #define RETRY_SEND_ON_RGUR		0

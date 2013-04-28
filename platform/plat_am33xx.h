@@ -9,11 +9,14 @@
 #include <asm/io.h>
 #include <mach/gpio.h>
 
-
-#define AM33XX_CONTROL_BASE		0x44e10000
+// the amount of RFM12 modules connected to the beaglebone
+// per default, we have settings for one board. if you want
+// more boards, you need to add the necessary settings below
+// as well.
+#define NUM_RFM12_BOARDS			1
 
 /*
- * default config for beaglebone
+ * default config for beaglebone (one RFM12 module)
  *
  *	p9/27:	rfm12b IRQ
  *  p9/29:  mosi/miso
@@ -22,27 +25,34 @@
  *  p9/42:  cs
  */
 
-static const u16 am33xx_irq_pin = 115;	// gpio3_19
-static const u16 am33xx_spi_bus = 2;	// spi port on bbone header
-static const u16 am33xx_spi_cs	= 1;	// CS 1
-
-struct am33xx_config {
-	u16 irq;
-	struct spi_device* spi_device;
-	struct {
-		u8 gpio_claimed:1;
-		u8 irq_claimed:1;
-		u8 irq_enabled:1;
-	} state;
+struct am33xx_board_config {
+	u16 irq_pin;
+	u16 spi_bus;
+	u16 spi_cs;
 };
 
-struct am33xx_pin_config {
+struct am33xx_board_config board_configs[NUM_RFM12_BOARDS] = {
+	{
+		.irq_pin		= 115,	// gpio3_19
+		.spi_bus		= 2,	// spi port on beaglebone header
+		.spi_cs			= 1		// CS 1
+	}
+};
+
+static const u16 am33xx_irq_pin = 115;	// gpio3_19
+
+#define AM33XX_CONTROL_BASE		0x44e10000
+
+struct am33xx_pinmux_settings {
 	u32 pin_addr;
 	u32 settings;
 	u8 claimed;
 };
 
-static struct am33xx_pin_config am33xx_pin_configs[] = {
+// these pinmux settings will be applied when the module is loaded.
+// if you want to connect multiple boards, add the definitions
+// and settings for the required pins here.
+static struct am33xx_pinmux_settings pinmux_settings[] = {
 	{
 		// beaglebone pin p9/27 (mcasp0_fsr)
 		//		set as GPIO3_19 (mode 7), PULLUP ENABLED, INPUT ENABLED 
@@ -81,7 +91,18 @@ static struct am33xx_pin_config am33xx_pin_configs[] = {
 	{ 0, 0}
 };
 
-static struct am33xx_config am33xx_conf;
+struct am33xx_active_board {
+	u16 irq;
+	void* irq_data;
+	struct spi_device* spi_device;
+	struct {
+		u8 gpio_claimed:1;
+		u8 irq_claimed:1;
+		u8 irq_enabled:1;
+	} state;
+};
+
+static struct am33xx_active_board active_boards[NUM_RFM12_BOARDS];
 
 static irqreturn_t
 am33xx_irq_handler(int irq, void* dev_id);
@@ -92,37 +113,50 @@ static int
 am33xx_cleanup_pinmux_settings(void);
 
 static int
-am33xx_setup_irq_pin(void);
+am33xx_setup_irq_pins(void);
 static int
-am33xx_cleanup_irq_pin(void);
+am33xx_cleanup_irq_pins(void);
 
 static int
-am33xx_register_spi_device(void);
+am33xx_register_spi_devices(void);
 static int
-am33xx_deregister_spi_device(void);
+am33xx_deregister_spi_devices(void);
 
 static irqreturn_t
 am33xx_irq_handler(int irq, void* dev_id)
 {
-	if (am33xx_conf.state.irq_enabled) {
-		am33xx_conf.state.irq_enabled = 0;
-		disable_irq_nosync(am33xx_conf.irq);
-	}
+	int idx = (int)dev_id;
 	
-	rfm12_handle_interrupt((struct rfm12_data*)dev_id);
+	if (idx >= 0 && idx < NUM_RFM12_BOARDS) {
+		struct am33xx_active_board* brd = &active_boards[idx];
+		
+		if (brd->state.irq_enabled) {
+			brd->state.irq_enabled = 0;
+			disable_irq_nosync(brd->irq);
+		}
+		
+		rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
+	}
 	
 	return IRQ_HANDLED;
 }
 
 static int
-platform_irq_handled(void* ctx)
+platform_irq_handled(int identifier)
 {
-	if (0 == am33xx_conf.state.irq_enabled) {
-		if (0 == gpio_get_value(am33xx_irq_pin))
-			rfm12_handle_interrupt((struct rfm12_data*)ctx);
+	struct am33xx_active_board* brd = &active_boards[identifier];
+	struct am33xx_board_config* cfg = &board_configs[identifier];
+	
+	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
+		return -ENODEV;
+	}
+	
+	if (0 == brd->state.irq_enabled) {
+		if (0 == gpio_get_value(cfg->irq_pin))
+			rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
 		else {
-			am33xx_conf.state.irq_enabled = 1;
-			enable_irq(am33xx_conf.irq);
+			brd->state.irq_enabled = 1;
+			enable_irq(brd->irq);
 		}
 	}
 
@@ -133,7 +167,7 @@ static int
 am33xx_init_pinmux_settings(void)
 {	
 	void* addr = NULL;
-	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
+	struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[0];
 		
 	while (0 != pin_conf->pin_addr) {
 		if (pin_conf->claimed) continue;
@@ -174,7 +208,7 @@ am33xx_init_pinmux_settings(void)
 static int
 am33xx_cleanup_pinmux_settings(void)
 {	
-	struct am33xx_pin_config* pin_conf = &am33xx_pin_configs[0];
+	struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[0];
 	
 	while (0 != pin_conf->pin_addr) {
 		if (pin_conf->claimed) {
@@ -189,54 +223,64 @@ am33xx_cleanup_pinmux_settings(void)
 }
 
 static int
-am33xx_setup_irq_pin(void)
+am33xx_setup_irq_pins(void)
 {
-	int err;
-	
-	err = gpio_request_one(am33xx_irq_pin, GPIOF_IN, RFM12B_DRV_NAME " irq pin");
-	if (0 != err) {
-		printk(KERN_ALERT RFM12B_DRV_NAME
-			" : unable to obtain GPIO pin %u.\n",
-			am33xx_irq_pin
-		);
+	int err, i;
 		
-		goto errReturn;
-	}
-	
-	am33xx_conf.state.gpio_claimed = 1;
-
-	err = gpio_to_irq(am33xx_irq_pin);
-	if (err < 0) {
-		printk(
-			KERN_ALERT RFM12B_DRV_NAME
-			" : unable to obtain IRQ for GPIO pin %u: %i.\n",
-			am33xx_irq_pin, err
-		);
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		err = gpio_request_one(board_configs[i].irq_pin, GPIOF_IN,
+				RFM12B_DRV_NAME " irq pin");
+		if (0 != err) {
+			printk(KERN_ALERT RFM12B_DRV_NAME
+				" : unable to obtain GPIO pin %u.\n",
+				board_configs[i].irq_pin
+			);
+			
+			goto errReturn;
+		}
 		
-		goto gpioErrReturn;
-	}
+		active_boards[i].state.gpio_claimed = 1;
 	
-	am33xx_conf.irq = (u16)err;
+		err = gpio_to_irq(board_configs[i].irq_pin);
+		if (err < 0) {
+			printk(
+				KERN_ALERT RFM12B_DRV_NAME
+				" : unable to obtain IRQ for GPIO pin %u: %i.\n",
+				board_configs[i].irq_pin, err
+			);
+			
+			goto gpioErrReturn;
+		}
+		
+		active_boards[i].irq = (u16)err;
+	}
 	
 	err = 0;
 	return err;
 
 gpioErrReturn:
-	gpio_free(am33xx_irq_pin);
-	am33xx_conf.state.gpio_claimed = 0;
+	while (i >= 0) {
+		gpio_free(board_configs[i].irq_pin);
+		active_boards[i].state.gpio_claimed = 0;
+		i--;
+	}
 
 errReturn:	
 	return err;
 }
 
 static int
-am33xx_cleanup_irq_pin(void)
+am33xx_cleanup_irq_pins(void)
 {
-	(void)platform_irq_cleanup(NULL);
+	int i;
 	
-	if (am33xx_conf.state.gpio_claimed) {
-		gpio_free(am33xx_irq_pin);
-		am33xx_conf.state.gpio_claimed = 0;
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		(void)platform_irq_cleanup(i);
+		
+		if (active_boards[i].state.gpio_claimed) {
+			gpio_free(board_configs[i].irq_pin);
+			active_boards[i].state.gpio_claimed = 0;
+		}
 	}
 	
 	return 0;
@@ -250,16 +294,16 @@ platform_module_init(void)
 	err = am33xx_init_pinmux_settings();
 	if (0 != err) goto muxFailed;
 	
-	err = am33xx_setup_irq_pin();
+	err = am33xx_setup_irq_pins();
 	if (0 != err) goto irqFailed;
 	
-	err = am33xx_register_spi_device();
+	err = am33xx_register_spi_devices();
 	if (0 != err) goto spiFailed;
 	
 	return err;
 
 spiFailed:
-	am33xx_cleanup_irq_pin();
+	am33xx_cleanup_irq_pins();
 irqFailed:
 	am33xx_cleanup_pinmux_settings();
 muxFailed:
@@ -270,148 +314,190 @@ static int
 platform_module_cleanup(void)
 {
 	(void)am33xx_cleanup_pinmux_settings();
-	(void)am33xx_cleanup_irq_pin();
-	(void)am33xx_deregister_spi_device();
+	(void)am33xx_cleanup_irq_pins();
+	(void)am33xx_deregister_spi_devices();
 	
 	return 0;
 }
 
 static int
-platform_irq_init(void* ctx)
+platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
+{
+	int i;
+	
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		if (spi_bus == board_configs[i].spi_bus &&
+			spi_cs == board_configs[i].spi_cs)
+			return i;
+	}
+	
+	return -1;
+}
+
+static int
+platform_irq_init(int identifier, void* rfm12_data)
 {
 	int err;
-	
-	if (am33xx_conf.state.irq_claimed) return -EBUSY;
-	
+	struct am33xx_active_board* brd = &active_boards[identifier];
+	struct am33xx_board_config* cfg = &board_configs[identifier];
+
+	if (identifier < 0 || identifier > NUM_RFM12_BOARDS)
+		return -ENODEV;
+
+	if (brd->state.irq_claimed)
+		return -EBUSY;
+
 	err = request_irq(
-		am33xx_conf.irq,
+		brd->irq,
 		am33xx_irq_handler,
 		IRQF_TRIGGER_FALLING | IRQF_DISABLED,
 		RFM12B_DRV_NAME,
-		ctx
+		(void*)identifier
 	);
-	
+
 	if (0 == err) {
-		am33xx_conf.state.irq_claimed = 1;
-		am33xx_conf.state.irq_enabled = 1;
+		brd->state.irq_claimed = 1;
+		brd->state.irq_enabled = 1;
+		brd->irq_data = rfm12_data;
 	} else
 		printk(
 			KERN_ALERT RFM12B_DRV_NAME
 			" : unable to activate IRQ %u: %i.\n",
-			am33xx_conf.irq, err
+			brd->irq, err
 		);
-	
-	if (0 == gpio_get_value(am33xx_irq_pin))
-		am33xx_irq_handler(am33xx_conf.irq, ctx);
-	
+
+	if (0 == gpio_get_value(cfg->irq_pin))
+		am33xx_irq_handler(brd->irq, (void*)identifier);
+
 	return err;	
 }
 
 static int
-platform_irq_cleanup(void* ctx)
+platform_irq_cleanup(int identifier)
 {
 	int err = 0;
+	
+	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
+		err = -ENODEV;
+	} else {
+		struct am33xx_active_board* brd = &active_boards[identifier];
 		
-	if (am33xx_conf.state.irq_claimed) {
-		free_irq(am33xx_conf.irq, ctx);
-		am33xx_conf.state.irq_claimed = 0;
+		if (brd->state.irq_claimed) {
+			free_irq(brd->irq, (void*)identifier);
+			brd->state.irq_claimed = 0;
+			brd->irq_data = NULL;
+		}
 	}
 	
 	return err;
 }
 
 static int
-am33xx_register_spi_device(void)
+am33xx_register_spi_devices(void)
 {
-	int err = 0;
+	int i, err = 0;
 	struct spi_master* spi_master;
 	struct spi_device* spi_device;
 	struct device* sdev;
 	char buf[128];
 	
-	spi_master = spi_busnum_to_master(am33xx_spi_bus);
-	if (NULL == spi_master) {
-		err = -ENODEV;
-		printk(
-			KERN_ALERT RFM12B_DRV_NAME
-			" : no spi_master found for busnum %u.\n",
-			am33xx_spi_bus
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		spi_master = spi_busnum_to_master(board_configs[i].spi_bus);
+		if (NULL == spi_master) {
+			err = -ENODEV;
+			printk(
+				KERN_ALERT RFM12B_DRV_NAME
+					" : no spi_master found for busnum %u.\n",
+					board_configs[i].spi_bus
+			);
+			
+			goto errReturn;
+		}
+		
+		spi_device = spi_alloc_device(spi_master);
+		if (NULL == spi_device) {
+			printk(
+				KERN_ALERT RFM12B_DRV_NAME
+					" : spi_alloc_device() failed.\n"
+			);
+			err = -ENOMEM;
+			goto errReturn;
+		}
+		
+		spi_device->chip_select = board_configs[i].spi_cs;
+		
+		snprintf(
+			buf,
+			sizeof(buf),
+			"%s.%u", 
+			dev_name(&spi_device->master->dev),
+			spi_device->chip_select
 		);
 		
-		goto errReturn;
+		sdev = bus_find_device_by_name(spi_device->dev.bus, NULL, buf);
+		if (NULL != sdev) {
+			spi_dev_put(spi_device);
+			
+			printk(
+				KERN_ALERT RFM12B_DRV_NAME
+					" : driver [%s] already registered for [%s]\n",
+					(sdev->driver && sdev->driver->name) ?
+						sdev->driver->name : "unknown",
+					buf
+			);
+			
+			err = -EBUSY;
+			goto errReturn;
+		}
+		
+		spi_device->max_speed_hz = RFM12B_SPI_MAX_HZ;
+		spi_device->mode = RFM12B_SPI_MODE;
+		spi_device->bits_per_word = RFM12B_SPI_BITS;
+		spi_device->chip_select = board_configs[i].spi_cs;
+		spi_device->irq = -1; /* we do our own interrupt handling */
+		spi_device->controller_state = NULL;
+		spi_device->controller_data = NULL;
+		strlcpy(spi_device->modalias, RFM12B_DRV_NAME, SPI_NAME_SIZE);
+		
+		err = spi_add_device(spi_device);
+		if (0 != err) {
+			spi_dev_put(spi_device);
+			
+			printk(
+				KERN_ALERT RFM12B_DRV_NAME
+					" : failed to register SPI device: %i\n",
+					err
+			);
+		} else
+			active_boards[i].spi_device = spi_device;
+		
+		put_device(&spi_master->dev);
+		spi_master = NULL;
 	}
 	
-	spi_device = spi_alloc_device(spi_master);
-	if (NULL == spi_device) {
-		printk(
-			KERN_ALERT RFM12B_DRV_NAME
-			" : spi_alloc_device() failed.\n"
-		);
-		err = -ENOMEM;
-		goto freeMaster;
-	}
+	return err;
 	
-	spi_device->chip_select = am33xx_spi_cs;
-	
-	snprintf(
-		buf,
-		sizeof(buf),
-		"%s.%u", 
-		dev_name(&spi_device->master->dev),
-		spi_device->chip_select
-	);
-	
-	sdev = bus_find_device_by_name(spi_device->dev.bus, NULL, buf);
-	if (NULL != sdev) {
-		spi_dev_put(spi_device);
-		
-		printk(
-			KERN_ALERT RFM12B_DRV_NAME
-			" : driver [%s] already registered for [%s]\n",
-			(sdev->driver && sdev->driver->name) ?
-				sdev->driver->name : "unknown",
-			buf
-		);
-		
-		err = -EBUSY;
-		goto freeMaster;
-	}
-	
-	spi_device->max_speed_hz = RFM12B_SPI_MAX_HZ;
-	spi_device->mode = RFM12B_SPI_MODE;
-	spi_device->bits_per_word = RFM12B_SPI_BITS;
-	spi_device->chip_select = am33xx_spi_cs;
-	spi_device->irq = -1; /* we do our own interrupt handling */
-	spi_device->controller_state = NULL;
-	spi_device->controller_data = NULL;
-	strlcpy(spi_device->modalias, RFM12B_DRV_NAME, SPI_NAME_SIZE);
-	
-	err = spi_add_device(spi_device);
-	if (0 != err) {
-		spi_dev_put(spi_device);
-		
-		printk(
-			KERN_ALERT RFM12B_DRV_NAME
-			" : failed to register SPI device: %i\n",
-			err
-		);
-	} else
-		am33xx_conf.spi_device = spi_device;
-	
-freeMaster:
-	put_device(&spi_master->dev);
 errReturn:
+	if (NULL != spi_master)
+		put_device(&spi_master->dev);
+
+	(void)am33xx_deregister_spi_devices();
+
 	return err;
 }
 
 static int
-am33xx_deregister_spi_device(void)
+am33xx_deregister_spi_devices(void)
 {
-	if (NULL != am33xx_conf.spi_device) {
-		spi_unregister_device(am33xx_conf.spi_device);
-		spi_dev_put(am33xx_conf.spi_device);
-		
-		am33xx_conf.spi_device = NULL;
+	int i;
+	
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		if (NULL != active_boards[i].spi_device) {
+			spi_unregister_device(active_boards[i].spi_device);
+			spi_dev_put(active_boards[i].spi_device);
+			
+			active_boards[i].spi_device = NULL;
+		}
 	}
 	
 	return 0;

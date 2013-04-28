@@ -3,22 +3,13 @@
 
 #include <linux/ioctl.h>
 
-// TODO: only during development!
-#define RFM12B_IOCTL_DEBUG
-
 typedef struct
 {
 	unsigned long bytes_recvd, bytes_sent;
 	unsigned long pkts_recvd, pkts_sent;
-	unsigned long num_overflows, num_timeouts, num_crc16_fail;
+	unsigned long num_recv_overflows, num_recv_timeouts, num_recv_crc16_fail;
+	unsigned long num_send_underruns, num_send_timeouts;
 	unsigned char low_battery;
-#ifdef RFM12B_IOCTL_DEBUG
-	unsigned char* in_buf, *in_buf_pos;
-	unsigned char* out_buf, *out_buf_pos;
-	unsigned char* in_cur_len_pos;
-	unsigned char* in_cur_end, *out_cur_end;
-	int in_cur_num_bytes, out_cur_num_bytes;
-#endif
 } rfm12b_stats;
 
 #define RFM12B_IOCTL_GET_STATS		_IOR('r', 1, rfm12b_stats*)
