@@ -7,7 +7,7 @@
 #include <linux/spi/spi.h>
 #include <mach/gpio.h>
 
-struct am33xx_active_board {
+struct spi_rfm12_active_board {
 	u16 irq;
 	void* irq_data;
 	struct spi_device* spi_device;
@@ -18,33 +18,33 @@ struct am33xx_active_board {
 	} state;
 };
 
-static struct am33xx_active_board active_boards[NUM_RFM12_BOARDS];
+static struct spi_rfm12_active_board active_boards[NUM_RFM12_BOARDS];
 
 static int
-spi_init_pinmux_settings(void);
+spi_rfm12_init_pinmux_settings(void);
 static int
-spi_cleanup_pinmux_settings(void);
-
-static irqreturn_t
-am33xx_irq_handler(int irq, void* dev_id);
-
-static int
-am33xx_setup_irq_pins(void);
-static int
-am33xx_cleanup_irq_pins(void);
-
-static int
-am33xx_register_spi_devices(void);
-static int
-am33xx_deregister_spi_devices(void);
+spi_rfm12_cleanup_pinmux_settings(void);
 
 static irqreturn_t
-am33xx_irq_handler(int irq, void* dev_id)
+spi_rfm12_irq_handler(int irq, void* dev_id);
+
+static int
+spi_rfm12_setup_irq_pins(void);
+static int
+spi_rfm12_cleanup_irq_pins(void);
+
+static int
+spi_rfm12_register_spi_devices(void);
+static int
+spi_rfm12_deregister_spi_devices(void);
+
+static irqreturn_t
+spi_rfm12_irq_handler(int irq, void* dev_id)
 {
 	int idx = (int)dev_id;
 	
 	if (idx >= 0 && idx < NUM_RFM12_BOARDS) {
-		struct am33xx_active_board* brd = &active_boards[idx];
+		struct spi_rfm12_active_board* brd = &active_boards[idx];
 		
 		if (brd->state.irq_enabled) {
 			brd->state.irq_enabled = 0;
@@ -60,8 +60,8 @@ am33xx_irq_handler(int irq, void* dev_id)
 static int
 platform_irq_handled(int identifier)
 {
-	struct am33xx_active_board* brd = &active_boards[identifier];
-	struct am33xx_board_config* cfg = &board_configs[identifier];
+	struct spi_rfm12_active_board* brd = &active_boards[identifier];
+	struct spi_rfm12_board_config* cfg = &board_configs[identifier];
 	
 	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
 		return -ENODEV;
@@ -80,7 +80,7 @@ platform_irq_handled(int identifier)
 }
 
 static int
-am33xx_setup_irq_pins(void)
+spi_rfm12_setup_irq_pins(void)
 {
 	int err, i;
 		
@@ -127,7 +127,7 @@ errReturn:
 }
 
 static int
-am33xx_cleanup_irq_pins(void)
+spi_rfm12_cleanup_irq_pins(void)
 {
 	int i;
 	
@@ -148,21 +148,21 @@ platform_module_init(void)
 {
 	int err;
 	
-	err = spi_init_pinmux_settings();
+	err = spi_rfm12_init_pinmux_settings();
 	if (0 != err) goto muxFailed;
 	
-	err = am33xx_setup_irq_pins();
+	err = spi_rfm12_setup_irq_pins();
 	if (0 != err) goto irqFailed;
 	
-	err = am33xx_register_spi_devices();
+	err = spi_rfm12_register_spi_devices();
 	if (0 != err) goto spiFailed;
 	
 	return err;
 
 spiFailed:
-	am33xx_cleanup_irq_pins();
+	spi_rfm12_cleanup_irq_pins();
 irqFailed:
-	spi_cleanup_pinmux_settings();
+	spi_rfm12_cleanup_pinmux_settings();
 muxFailed:
 	return err;
 }
@@ -170,9 +170,9 @@ muxFailed:
 static int
 platform_module_cleanup(void)
 {
-	(void)spi_cleanup_pinmux_settings();
-	(void)am33xx_cleanup_irq_pins();
-	(void)am33xx_deregister_spi_devices();
+	(void)spi_rfm12_cleanup_pinmux_settings();
+	(void)spi_rfm12_cleanup_irq_pins();
+	(void)spi_rfm12_deregister_spi_devices();
 	
 	return 0;
 }
@@ -195,8 +195,8 @@ static int
 platform_irq_init(int identifier, void* rfm12_data)
 {
 	int err;
-	struct am33xx_active_board* brd = &active_boards[identifier];
-	struct am33xx_board_config* cfg = &board_configs[identifier];
+	struct spi_rfm12_active_board* brd = &active_boards[identifier];
+	struct spi_rfm12_board_config* cfg = &board_configs[identifier];
 
 	if (identifier < 0 || identifier > NUM_RFM12_BOARDS)
 		return -ENODEV;
@@ -206,7 +206,7 @@ platform_irq_init(int identifier, void* rfm12_data)
 
 	err = request_irq(
 		brd->irq,
-		am33xx_irq_handler,
+		spi_rfm12_irq_handler,
 		IRQF_TRIGGER_FALLING | IRQF_DISABLED,
 		RFM12B_DRV_NAME,
 		(void*)identifier
@@ -224,7 +224,7 @@ platform_irq_init(int identifier, void* rfm12_data)
 		);
 
 	if (0 == gpio_get_value(cfg->irq_pin))
-		am33xx_irq_handler(brd->irq, (void*)identifier);
+		spi_rfm12_irq_handler(brd->irq, (void*)identifier);
 
 	return err;	
 }
@@ -237,7 +237,7 @@ platform_irq_cleanup(int identifier)
 	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
 		err = -ENODEV;
 	} else {
-		struct am33xx_active_board* brd = &active_boards[identifier];
+		struct spi_rfm12_active_board* brd = &active_boards[identifier];
 		
 		if (brd->state.irq_claimed) {
 			free_irq(brd->irq, (void*)identifier);
@@ -250,7 +250,7 @@ platform_irq_cleanup(int identifier)
 }
 
 static int
-am33xx_register_spi_devices(void)
+spi_rfm12_register_spi_devices(void)
 {
 	int i, err = 0;
 	struct spi_master* spi_master;
@@ -291,18 +291,28 @@ am33xx_register_spi_devices(void)
 			spi_device->chip_select
 		);
 		
+		// if a driver is already registered for our chipselect, try
+		// to unregister it, and retry. fail if unregistering didn't
+		// work for some reason.
+		sdev = bus_find_device_by_name(spi_device->dev.bus, NULL, buf);
+		if (NULL != sdev) {
+			spi_unregister_device((struct spi_device*)sdev);
+			spi_dev_put((struct spi_device*)sdev);
+		}
+		
 		sdev = bus_find_device_by_name(spi_device->dev.bus, NULL, buf);
 		if (NULL != sdev) {
 			spi_dev_put(spi_device);
-			
+
 			printk(
 				KERN_ALERT RFM12B_DRV_NAME
-					" : driver [%s] already registered for [%s]\n",
+					" : driver [%s] already registered for [%s], can't "
+					"unregister it\n",
 					(sdev->driver && sdev->driver->name) ?
 						sdev->driver->name : "unknown",
 					buf
 			);
-			
+
 			err = -EBUSY;
 			goto errReturn;
 		}
@@ -338,13 +348,13 @@ errReturn:
 	if (NULL != spi_master)
 		put_device(&spi_master->dev);
 
-	(void)am33xx_deregister_spi_devices();
+	(void)spi_rfm12_deregister_spi_devices();
 
 	return err;
 }
 
 static int
-am33xx_deregister_spi_devices(void)
+spi_rfm12_deregister_spi_devices(void)
 {
 	int i;
 	

@@ -6,9 +6,9 @@
 #include <errno.h>
 
 #include "../common/common.h"
+#include "../../rfm12b_config.h"
 #include "../../rfm12b_ioctl.h"
 
-#define RF12_DEV		"/dev/rfm12.2.1"
 #define RF12_BUF_LEN	128
 
 static volatile int running;
@@ -26,9 +26,9 @@ int main(int argc, char** argv)
 	unsigned long pkt_cnt;
 	time_t tt;
 	
-	devname = RF12_DEV;
+	devname = RF12_TESTS_DEV;
 	
-	fd = open(RF12_DEV, O_RDWR);
+	fd = open(RF12_TESTS_DEV, O_RDWR);
 	if (fd < 0) {
 		printf("\nfailed to open %s: %s.\n\n", devname, strerror(errno));
 		return fd;

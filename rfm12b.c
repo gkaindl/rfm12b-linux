@@ -11,12 +11,17 @@
 #include <linux/poll.h>
 #include <linux/spi/spi.h>
 
+#define BUILD_MODULE	1
+
 #include "rfm12b_config.h"
+
+#if defined(MODULE_BOARD_CONFIGURED)
+
 #include "rfm12b_ioctl.h"
 
-static u8 group_id			= 211;
-static u8 band_id			= 2;	// 868mhz, set to 1 for 433mhz
-static u8 bit_rate			= 0x06;	// 49.2 kbit/s, like jeelib
+static u8 group_id			= RFM12B_DEFAULT_GROUP_ID;
+static u8 band_id			= RFM12B_DEFAULT_BAND_ID;
+static u8 bit_rate			= RFM12B_DEFAULT_BIT_RATE;
 
 module_param(group_id, byte, 0000);
 MODULE_PARM_DESC(group_id,
@@ -64,7 +69,7 @@ MODULE_PARM_DESC(bit_rate,
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
-static DECLARE_BITMAP(minors, RFM12_N_SPI_MINORS);
+static DECLARE_BITMAP(minors, RFM12B_NUM_SPI_MINORS);
 
 DECLARE_WAIT_QUEUE_HEAD(rfm12_wait_read);
 DECLARE_WAIT_QUEUE_HEAD(rfm12_wait_write);
@@ -707,7 +712,7 @@ rfm12_recv_spi_completion_handler(void *arg)
 	
 	   if ((status & RF_STATUS_BIT_FFOV_RGUR) && !packet_finished) {
 		  rfm12->num_recv_overflows++;
-		  if (DROP_PACKET_ON_FFOV)
+		  if (RFM12B_DROP_PACKET_ON_FFOV)
 		  	(void)rfm12_finish_receiving(rfm12, 1);
 	   }
    }
@@ -715,7 +720,8 @@ rfm12_recv_spi_completion_handler(void *arg)
    spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
    
    if (!valid_interrupt ||
-   	  (!packet_finished && (DROP_PACKET_ON_FFOV && !(status & RF_STATUS_BIT_FFOV_RGUR))))
+   	  (!packet_finished && (RFM12B_DROP_PACKET_ON_FFOV &&
+   	   !(status & RF_STATUS_BIT_FFOV_RGUR))))
    	   platform_irq_handled(rfm12->irq_identifier);
 }
 
@@ -740,12 +746,12 @@ rfm12_send_spi_completion_handler(void *arg)
    		((status & RF_STATUS_BIT_FFIT_RGIT) || (status & RF_STATUS_BIT_FFOV_RGUR));
 
    if (valid_interrupt && NULL != rfm12->out_buf) {
-	   if (RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR)) {
+	   if (RFM12B_RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR)) {
 		   packet_finished = 1;
 		   rfm12->num_send_underruns++;
 		   (void)rfm12_finish_sending(rfm12, 0);
 	   } else {
-		   if (!RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR))
+		   if (!RFM12B_RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR))
 		   	   rfm12->num_send_underruns++;
 		   
 		   switch(rfm12->state) {
@@ -1285,7 +1291,7 @@ rfm12_probe(struct spi_device *spi)
 	if (0 > rfm12->irq_identifier) {
 		printk(KERN_ERR RFM12B_DRV_NAME
 		  ": no IRQ identifier found for %s.%d.%d\n",
-		RFM12_NAME, spi->master->bus_num, spi->chip_select);
+		RFM12B_NAME, spi->master->bus_num, spi->chip_select);
 		
 		kfree(rfm12);
 		
@@ -1301,13 +1307,13 @@ rfm12_probe(struct spi_device *spi)
 	INIT_LIST_HEAD(&rfm12->device_entry);
 
 	mutex_lock(&device_list_lock);
-	minor = find_first_zero_bit(minors, RFM12_N_SPI_MINORS);
-	if (minor < RFM12_N_SPI_MINORS) {
+	minor = find_first_zero_bit(minors, RFM12B_NUM_SPI_MINORS);
+	if (minor < RFM12B_NUM_SPI_MINORS) {
 		struct device *dev;
 
-		rfm12->devt = MKDEV(RFM12_SPI_MAJOR, minor);
+		rfm12->devt = MKDEV(RFM12B_SPI_MAJOR, minor);
 		dev = device_create(rfm12_class, &spi->dev, rfm12->devt,
-					rfm12, RFM12_NAME ".%d.%d",
+					rfm12, RFM12B_NAME ".%d.%d",
 					spi->master->bus_num, spi->chip_select);
 		err = IS_ERR(dev) ? PTR_ERR(dev) : 0;
 	} else {
@@ -1327,7 +1333,7 @@ rfm12_probe(struct spi_device *spi)
 
 	   printk(KERN_INFO RFM12B_DRV_NAME
 		   ": added RFM12(B) transceiver %s.%d.%d\n",
-		 RFM12_NAME, spi->master->bus_num, spi->chip_select);
+		 RFM12B_NAME, spi->master->bus_num, spi->chip_select);
 	} else
 		kfree(rfm12);
 
@@ -1342,7 +1348,7 @@ rfm12_remove(struct spi_device *spi)
 
 	printk(KERN_INFO RFM12B_DRV_NAME
 	   ": removed RFM12(B) transceiver %s.%d.%d\n",
-	  RFM12_NAME, spi->master->bus_num, spi->chip_select);
+	  RFM12B_NAME, spi->master->bus_num, spi->chip_select);
 
 	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
@@ -1383,15 +1389,15 @@ rfm12_init_module(void)
 	if (err)
 		goto errReturn;
 
-	err = register_chrdev(RFM12_SPI_MAJOR, "spi", &rfm12_fops);
+	err = register_chrdev(RFM12B_SPI_MAJOR, "spi", &rfm12_fops);
 	if (err < 0) {
 		platform_module_cleanup();
 		goto errReturn;
 	}
 
-	rfm12_class = class_create(THIS_MODULE, RFM12_NAME);
+	rfm12_class = class_create(THIS_MODULE, RFM12B_NAME);
 	if (IS_ERR(rfm12_class)) {
-		unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
+		unregister_chrdev(RFM12B_SPI_MAJOR, rfm12_spi_driver.driver.name);
 		platform_module_cleanup();
 		err = PTR_ERR(rfm12_class);
 		goto errReturn;
@@ -1400,7 +1406,7 @@ rfm12_init_module(void)
 	err = spi_register_driver(&rfm12_spi_driver);
 	if (err < 0) {
 		class_destroy(rfm12_class);
-		unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
+		unregister_chrdev(RFM12B_SPI_MAJOR, rfm12_spi_driver.driver.name);
 		platform_module_cleanup();
 	}
 
@@ -1426,7 +1432,7 @@ rfm12_cleanup_module(void)
 {	
 	spi_unregister_driver(&rfm12_spi_driver);
 	class_destroy(rfm12_class);
-	unregister_chrdev(RFM12_SPI_MAJOR, rfm12_spi_driver.driver.name);
+	unregister_chrdev(RFM12B_SPI_MAJOR, rfm12_spi_driver.driver.name);
 
 	(void)platform_module_cleanup();
 
@@ -1443,3 +1449,5 @@ MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Georg Kaindl <gkaindl (AT) mac.com>");
 MODULE_DESCRIPTION("kernel driver for rfm12b digital radio module");
 MODULE_VERSION("0.0.1");
+
+#endif // defined(MODULE_BOARD_CONFIGURED)

@@ -1,5 +1,5 @@
-#if !defined(__RFM12_PLAT_AM33XX_H__)
-#define __RFM12_PLAT_AM33XX_H__
+#if !defined(__RFM12_PLAT_BEAGLEBONE_H__)
+#define __RFM12_PLAT_BEAGLEBONE_H__
 
 #include <linux/ioport.h>
 #include <asm/io.h>
@@ -20,7 +20,7 @@
 *  p9/42:  cs
 */
 
-struct am33xx_board_config board_configs[NUM_RFM12_BOARDS] = {
+struct spi_rfm12_board_config board_configs[NUM_RFM12_BOARDS] = {
 	{
 		.irq_pin		= 115,	// gpio3_19
 		.spi_bus		= 2,	// spi port on beaglebone header
@@ -79,12 +79,12 @@ static struct am33xx_pinmux_settings pinmux_settings[] = {
 };
 
 static int
-spi_init_pinmux_settings(void);
+spi_rfm12_init_pinmux_settings(void);
 static int
-spi_cleanup_pinmux_settings(void);
+spi_rfm12_cleanup_pinmux_settings(void);
 
 static int
-spi_init_pinmux_settings(void)
+spi_rfm12_init_pinmux_settings(void)
 {	
 	void* addr = NULL;
 	struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[0];
@@ -126,7 +126,7 @@ spi_init_pinmux_settings(void)
 }
 
 static int
-spi_cleanup_pinmux_settings(void)
+spi_rfm12_cleanup_pinmux_settings(void)
 {	
 	struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[0];
 	
@@ -142,4 +142,4 @@ spi_cleanup_pinmux_settings(void)
 	return 0;
 }
 
-#endif // __RFM12_PLAT_AM33XX_H__
+#endif // __RFM12_PLAT_BEAGLEBONE_H__

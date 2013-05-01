@@ -19,8 +19,7 @@ platform_irq_handled(int identifier);
 static int
 platform_irq_cleanup(int identifier);
 
-
-struct am33xx_board_config {
+struct spi_rfm12_board_config {
 	u16 irq_pin;
 	u16 spi_bus;
 	u16 spi_cs;

@@ -7,12 +7,11 @@
 #include <stdlib.h>
 
 #include "../common/common.h"
+#include "../../rfm12b_config.h"
 #include "../../rfm12b_ioctl.h"
 
 #define PACKET_LEN		10
 #define SEND_DELAY		1000
-
-#define RF12_DEV		"/dev/rfm12.2.1"
 
 static volatile int running;
 
@@ -30,9 +29,9 @@ int main(int argc, char** argv)
 	time_t tt;
 	unsigned char* bytes = (unsigned char*)malloc(PACKET_LEN);
 	
-	devname = RF12_DEV;
+	devname = RF12_TESTS_DEV;
 	
-	fd = open(RF12_DEV, O_RDWR);
+	fd = open(RF12_TESTS_DEV, O_RDWR);
 	if (fd < 0) {
 		printf("\nfailed to open %s: %s.\n\n", devname, strerror(errno));
 		return fd;
