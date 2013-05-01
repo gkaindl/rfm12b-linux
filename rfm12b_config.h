@@ -11,19 +11,19 @@
   Raspberri Pi      1               platform/plat_raspberrypi.h
   Beaglebone        2               platform/plat_beaglebone.h
 */
-#define RFM12B_BOARD        0
+#define RFM12B_BOARD        1
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
 */
-#define RFM12B_DRV_NAME     "rfm12"
+#define RFM12B_DRV_NAME     "rfm12b"
 
 /*
   The textual part of the device name in /dev. E.g., with the default
   setting, the device name for an RFM12b module on SPI bus 2, CS 1 would
   be /dev/rfm12.2.1
 */
-#define RFM12B_NAME        	"rfm12"
+#define RFM12B_DEV_NAME     "rfm12b"
 
 /*
   The default group ID to use for each RFM12B board. You can change the
@@ -114,15 +114,22 @@
 #if defined(MODULE_BOARD_CONFIGURED)
 #if BUILD_MODULE
 #include "platform/platform.h"
+
 #if RFM12B_BOARD==1
 #include "platform/plat_raspberrypi.h"
+
 #elif RFM12B_BOARD==2
 #include "platform/plat_beaglebone.h"
 #endif
+
 #include "platform/plat_spi.h"
 #endif // BUILD_MODULE
 
-#define RF12_TESTS_DEV      "/dev/rfm12.0.1"
+#if RFM12B_BOARD==1
+#define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".0.1"
+#elif RFM12B_BOARD==2
+#define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".2.1"
+#endif
 
 #endif // MODULE_BOARD_CONFIGURED
 

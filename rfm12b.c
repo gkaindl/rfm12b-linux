@@ -1291,7 +1291,7 @@ rfm12_probe(struct spi_device *spi)
 	if (0 > rfm12->irq_identifier) {
 		printk(KERN_ERR RFM12B_DRV_NAME
 		  ": no IRQ identifier found for %s.%d.%d\n",
-		RFM12B_NAME, spi->master->bus_num, spi->chip_select);
+		RFM12B_DEV_NAME, spi->master->bus_num, spi->chip_select);
 		
 		kfree(rfm12);
 		
@@ -1313,7 +1313,7 @@ rfm12_probe(struct spi_device *spi)
 
 		rfm12->devt = MKDEV(RFM12B_SPI_MAJOR, minor);
 		dev = device_create(rfm12_class, &spi->dev, rfm12->devt,
-					rfm12, RFM12B_NAME ".%d.%d",
+					rfm12, RFM12B_DEV_NAME ".%d.%d",
 					spi->master->bus_num, spi->chip_select);
 		err = IS_ERR(dev) ? PTR_ERR(dev) : 0;
 	} else {
@@ -1333,7 +1333,7 @@ rfm12_probe(struct spi_device *spi)
 
 	   printk(KERN_INFO RFM12B_DRV_NAME
 		   ": added RFM12(B) transceiver %s.%d.%d\n",
-		 RFM12B_NAME, spi->master->bus_num, spi->chip_select);
+		 RFM12B_DEV_NAME, spi->master->bus_num, spi->chip_select);
 	} else
 		kfree(rfm12);
 
@@ -1348,7 +1348,7 @@ rfm12_remove(struct spi_device *spi)
 
 	printk(KERN_INFO RFM12B_DRV_NAME
 	   ": removed RFM12(B) transceiver %s.%d.%d\n",
-	  RFM12B_NAME, spi->master->bus_num, spi->chip_select);
+	  RFM12B_DEV_NAME, spi->master->bus_num, spi->chip_select);
 
 	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
@@ -1395,7 +1395,7 @@ rfm12_init_module(void)
 		goto errReturn;
 	}
 
-	rfm12_class = class_create(THIS_MODULE, RFM12B_NAME);
+	rfm12_class = class_create(THIS_MODULE, RFM12B_DEV_NAME);
 	if (IS_ERR(rfm12_class)) {
 		unregister_chrdev(RFM12B_SPI_MAJOR, rfm12_spi_driver.driver.name);
 		platform_module_cleanup();
