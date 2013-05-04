@@ -64,6 +64,11 @@
 #define RFM12B_DEFAULT_BIT_RATE  0x06
 
 /*
+  TODO: document jee-compatible mode
+*/
+#define RFM12B_DEFAULT_JEE_ID    0
+
+/*
   SPI settings that the driver will use. You shouldn't need to change
   anything, though you can experiment with higher SPI frequencies -
   however, note that the RFM12b's datasheet mentions that 2.5MHz is

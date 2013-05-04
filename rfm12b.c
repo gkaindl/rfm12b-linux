@@ -18,10 +18,12 @@
 #if defined(MODULE_BOARD_CONFIGURED)
 
 #include "rfm12b_ioctl.h"
+#include "rfm12b_jeenode.h"
 
 static u8 group_id			= RFM12B_DEFAULT_GROUP_ID;
 static u8 band_id			= RFM12B_DEFAULT_BAND_ID;
 static u8 bit_rate			= RFM12B_DEFAULT_BIT_RATE;
+static u8 jee_id			= RFM12B_DEFAULT_JEE_ID;
 
 module_param(group_id, byte, 0000);
 MODULE_PARM_DESC(group_id,
@@ -33,6 +35,10 @@ MODULE_PARM_DESC(band_id,
 module_param(bit_rate, byte, 0000);
 MODULE_PARM_DESC(bit_rate,
 	"bit rate setting byte for rfm12b modules (see datasheet). "
+	"can be changed per board via ioctl().");
+module_param(jee_id, byte, 0000);
+MODULE_PARM_DESC(jee_id,
+	"jeenode id for rfm12b modules, or 0 to disable the jee protocol. this "
 	"can be changed per board via ioctl().");
 
 #define RF_READ_STATUS     0x0000
@@ -66,6 +72,10 @@ MODULE_PARM_DESC(bit_rate,
 #define NUM_MAX_CONCURRENT_MSG   (3)
 
 #define BIT_RATE_FROM_BYTE(b)	(10000000/29/((b&0x7f)+1)/(1+(b&0x80)*7))
+
+#define INTERPRETS_JEENODE_PROTOCOL(rfm12)		(0 != (rfm12)->jee_id)
+#define CAN_SEND_BYTES_OF_LENGTH(LEN)		\
+	(DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= (LEN) + RF_EXTRA_LEN)
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
@@ -111,7 +121,7 @@ struct rfm12_data {
 	u8                   open;
 	u8					 should_release;
 	rfm12_state_t        state;
-	u8					 group_id, band_id, bit_rate;
+	u8					 group_id, band_id, bit_rate, jee_id;
 	unsigned long        bytes_recvd, pkts_recvd;
 	unsigned long        bytes_sent, pkts_sent;
 	unsigned long        num_recv_overflows, num_recv_timeouts, num_recv_crc16_fail;
@@ -149,6 +159,8 @@ static void
 rfm12_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer);
 static int
 rfm12_reset(struct rfm12_data* rfm12);
+static void
+rfm12_apply_crc16(struct rfm12_data* rfm12, unsigned char* ptr, unsigned len);
 
 static struct rfm12_spi_message*
 rfm12_claim_spi_message(struct rfm12_data* rfm12)
@@ -453,9 +465,11 @@ rfm12_setup(struct rfm12_data* rfm12)
    }
 
 	printk(KERN_INFO RFM12B_DRV_NAME
-	    ": transceiver %d settings now: group %d, band %d, bit rate 0x%.2x (%d bps).\n",
+	    ": transceiver %d settings now: group %d, band %d, bit rate 0x%.2x (%d bps), "
+	    "jee id: %d.\n",
 	    rfm12->irq_identifier, rfm12->group_id, rfm12->band_id,
-	    rfm12->bit_rate, BIT_RATE_FROM_BYTE(rfm12->bit_rate));
+	    rfm12->bit_rate, BIT_RATE_FROM_BYTE(rfm12->bit_rate),
+	    rfm12->jee_id);
 
 pError:
    rfm12->state = RFM12_STATE_IDLE;
@@ -603,8 +617,35 @@ rfm12_finish_receiving(struct rfm12_data* rfm12, int skip_packet)
 	  if (0 == skip_packet && 0 == rfm12->crc16) {
 		 rfm12->pkts_recvd++;
 		 rfm12->bytes_recvd += num_bytes - 3;
-		  
+		 
+		 // if we are in jeenode-compatible mode and this packet
+		 // needs an ACK, we send one automatically to the source node.
+		 if (INTERPRETS_JEENODE_PROTOCOL(rfm12) && CAN_SEND_BYTES_OF_LENGTH(0)) {
+		    u8 hdr = rfm12->in_cur_len_pos[-1];
+
+		    if ((hdr & RFM12B_JEE_HDR_ACK_BIT) && !(hdr & RFM12B_JEE_HDR_CTL_BIT)) {
+			    u8 snd_hdr = 0;
+			    
+			    if (hdr & RFM12B_JEE_HDR_DST_BIT) {
+				    // if this was only sent to us, send ACK as broadcast
+				    snd_hdr |= RFM12B_JEE_HDR_CTL_BIT | RFM12B_JEE_ID_FROM_HDR(rfm12->jee_id);
+			    } else {
+				    // if this was a broadcast, send ACK directly to source node.
+				    snd_hdr |= RFM12B_JEE_HDR_CTL_BIT | RFM12B_JEE_HDR_DST_BIT |
+				    				RFM12B_JEE_ID_FROM_HDR(hdr);
+			    }
+			    
+			    *rfm12->out_cur_end++ = snd_hdr;			    
+			    *rfm12->out_cur_end++ = (u8)0;
+			    
+			    rfm12_apply_crc16(rfm12, rfm12->out_cur_end-2, 2);
+			    
+			    rfm12->out_cur_end += 2;	// crc16 = 2 bytes
+		    }
+		 }
+		 
 		 rfm12->in_cur_end = rfm12->in_buf_pos;
+		 
 		 wake_up_interruptible(&rfm12->wait_read);
 	  } else {
 		 if (0 == skip_packet && 0 != rfm12->crc16)
@@ -958,6 +999,20 @@ rfm12_stop_listening_and_send(struct rfm12_data* rfm12)
 	return err;
 }
 
+static void
+rfm12_apply_crc16(struct rfm12_data* rfm12, unsigned char* ptr, unsigned len)
+{
+	u16 i, crc16 = ~0;
+	if (0 != rfm12->group_id)
+		crc16 = rfm12_crc16_update(~0, rfm12->group_id);
+	for (i=0; i<len; i++)
+		crc16 = rfm12_crc16_update(crc16, ptr[i]);
+	
+	// crc16
+	ptr[len] = crc16 & 0xFF;
+	ptr[len+1] = (crc16 >> 8) & 0xFF;
+}
+
 // this should only be called from an interrupt context
 static void
 rfm12_handle_interrupt(struct rfm12_data* rfm12)
@@ -1009,7 +1064,7 @@ static ssize_t
 rfm12_read(struct file* filp, char __user *buf, size_t count, loff_t* f_pos)
 {
    struct rfm12_data* rfm12 = (struct rfm12_data*)filp->private_data;
-   int length = 0, bytes_to_copy = 0, mmovelen = 0;
+   int length = 0, bytes_to_copy = 0, mmovelen = 0, offset = 0;
    unsigned long flags;
 
    if (rfm12->in_cur_end == rfm12->in_buf)
@@ -1023,12 +1078,19 @@ rfm12_read(struct file* filp, char __user *buf, size_t count, loff_t* f_pos)
 
    length = *(rfm12->in_buf + 1) + 2;
    
-   // dont pass JeeLib hdr/len bytes to userspace.
-   bytes_to_copy = (count > length-2) ? length-2 : count;
+   // if we are not in jee-compatible mode, we dont pass JeeLib hdr/len
+   // bytes to userspace.
+   if (INTERPRETS_JEENODE_PROTOCOL(rfm12)) {
+      offset = 0;
+	  bytes_to_copy = (count > length) ? length : count;
+   } else {
+	  offset = 2;
+	  bytes_to_copy = (count > length-2) ? length-2 : count;
+   }
 
    spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
    
-   bytes_to_copy -= copy_to_user(buf, rfm12->in_buf+2, bytes_to_copy);
+   bytes_to_copy -= copy_to_user(buf, rfm12->in_buf+offset, bytes_to_copy);
 
    spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
@@ -1051,44 +1113,45 @@ rfm12_write(struct file *filp, const char __user *buf,
 size_t count, loff_t *f_pos)
 {
 	struct rfm12_data* rfm12 = (struct rfm12_data*)filp->private_data;
-	int bytes_to_copy = 0, copied = 0, i;
-	u16 crc16;
+	int bytes_to_copy = 0, copied = 0, offset = 0;
 	unsigned long flags;
-
-	bytes_to_copy = (RF_MAX_DATA_LEN < count) ? RF_MAX_DATA_LEN : count;
 	
-	if (DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) < bytes_to_copy + RF_EXTRA_LEN)
+	if (INTERPRETS_JEENODE_PROTOCOL(rfm12)) {
+		offset = 0;
+	} else {
+		offset = 2;
+	}
+
+	bytes_to_copy =
+		(RF_MAX_DATA_LEN+2-offset < count) ? RF_MAX_DATA_LEN+2-offset : count;
+	
+	if (!CAN_SEND_BYTES_OF_LENGTH(bytes_to_copy))
 		wait_event_interruptible(rfm12->wait_write,
-			DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= bytes_to_copy + RF_EXTRA_LEN);
+			CAN_SEND_BYTES_OF_LENGTH(bytes_to_copy));
 
 	copied = bytes_to_copy - copy_from_user(
-		rfm12->out_cur_end+2,
+		rfm12->out_cur_end+offset,
 		buf,
 		bytes_to_copy
 	);
 
 	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
-	// header: we keep this at 0, meaning "broadcast from node 0" in jeenode speak
-	//   that way. any flow control etc... has to be implemented by the client app,
-	//   but we're still compatible with the jeenode format.
-	*rfm12->out_cur_end++ = 0;
-	
-	// length field
-	*rfm12->out_cur_end++ = (u8)copied;
-	
-	crc16 = ~0;
-	if (0 != rfm12->group_id)
-		crc16 = rfm12_crc16_update(~0, rfm12->group_id);
-	for (i=-2; i<copied; i++)
-		crc16 = rfm12_crc16_update(crc16, rfm12->out_cur_end[i]);
-
+	if (INTERPRETS_JEENODE_PROTOCOL(rfm12)) {
+		// header is taken verbatim from userspace, but we'll check (and fix) len
+		rfm12->out_cur_end++;		// skip hdr, it's taken from userspace.
+		*rfm12->out_cur_end++ = copied-2;	// don't trust userspace's len field.
+	} else {
+		// header: we keep this at 0, meaning "broadcast from node 0" in jeenode speak
+		//   that way. any flow control etc... has to be implemented by the client app,
+		//   but we're still compatible with the jeenode format.
+		*rfm12->out_cur_end++ = 0;			// hdr		
+		*rfm12->out_cur_end++ = (u8)copied;	// len
+	}
 		
-	rfm12->out_cur_end += copied;
-	
-	// crc16
-	*rfm12->out_cur_end++ = crc16 & 0xFF;
-	*rfm12->out_cur_end++ = (crc16 >> 8) & 0xFF;
+	rfm12_apply_crc16(rfm12, rfm12->out_cur_end-2, copied+offset);
+
+	rfm12->out_cur_end += copied + offset;
 
     if (RFM12_STATE_IDLE == rfm12->state) {
     	rfm12_begin_sending_or_receiving(rfm12);
@@ -1171,6 +1234,15 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	   	   break;
 	   }
 	   
+	   case RFM12B_GET_JEE_ID: {
+	   	   int ji = rfm12->jee_id;
+	   	   	   	   
+	   	   if (0 != copy_to_user((int*)arg, &ji, sizeof(ji)))
+	   	   	   return -EACCES;
+	   	   
+	   	   break;
+	   }
+	   
 	   case RFM12B_SET_GROUP_ID: {
 	   	   int gid;
 	   	   	   		   	   	   	   
@@ -1207,6 +1279,18 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	   	   break;
 	   }
 	   
+	   case RFM12B_SET_JEE_ID: {
+	   	   int ji;
+	   	   	   	   
+	   	   if (0 != copy_from_user(&ji, (int*)arg, sizeof(ji)))
+	   	   	   return -EACCES;
+	   	   
+	   	   rfm12->jee_id = ji;
+	   	   rfm12_reset(rfm12);
+	   	   
+	   	   break;
+	   }
+	   
 	   default:
 	   	   return -EINVAL;
 	}
@@ -1238,6 +1322,7 @@ rfm12_open(struct inode *inode, struct file *filp)
 	rfm12->group_id = group_id;
 	rfm12->band_id = band_id;
 	rfm12->bit_rate = bit_rate;
+	rfm12->jee_id = jee_id;
 	
 	if (0 == err)
 	 	err = rfm12_setup(rfm12);

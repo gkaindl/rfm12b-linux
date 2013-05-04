@@ -1,9 +1,10 @@
-TESTS = rfm12b_read rfm12b_write rfm12b_echo rfm12b_chat
+TESTS = rfm12b_read rfm12b_write rfm12b_echo rfm12b_chat rfm12b_jeenode
 SRC = common/common.c
 OBJ = $(SRC:.c=.o)
 
 SRC_PROG = rfm12b_read/rfm12b_read.c rfm12b_write/rfm12b_write.c \
-	rfm12b_echo/rfm12b_echo.c rfm12b_chat/rfm12b_chat.c
+	rfm12b_echo/rfm12b_echo.c rfm12b_chat/rfm12b_chat.c \
+	rfm12b_jeenode/rfm12b_jeenode.c
 OBJ_PROG = $(SRC_PROG:.c=.o)
 
 dir=@mkdir -p bin
@@ -23,6 +24,10 @@ rfm12b_echo: rfm12b_echo/rfm12b_echo.o $(OBJ)
 	gcc $< $(OBJ) -o bin/$@  
 	
 rfm12b_chat: rfm12b_chat/rfm12b_chat.o $(OBJ)
+	$(dir)
+	gcc $< $(OBJ) -o bin/$@   
+	
+rfm12b_jeenode: rfm12b_jeenode/rfm12b_jeenode.o $(OBJ)
 	$(dir)
 	gcc $< $(OBJ) -o bin/$@      
 
