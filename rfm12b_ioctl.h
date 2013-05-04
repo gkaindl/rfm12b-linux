@@ -3,6 +3,8 @@
 
 #include <linux/ioctl.h>
 
+#include "rfm12b_config.h"
+
 typedef struct
 {
 	unsigned long bytes_recvd, bytes_sent;
@@ -12,6 +14,12 @@ typedef struct
 	unsigned char low_battery;
 } rfm12b_stats;
 
-#define RFM12B_IOCTL_GET_STATS		_IOR('r', 1, rfm12b_stats*)
+#define RFM12B_IOCTL_GET_STATS		_IOR(RFM12B_SPI_MAJOR, 0, rfm12b_stats*)
+#define RFM12B_GET_GROUP_ID			_IOR(RFM12B_SPI_MAJOR, 1, int)
+#define RFM12B_GET_BAND_ID			_IOR(RFM12B_SPI_MAJOR, 2, int)
+#define RFM12B_GET_BIT_RATE			_IOR(RFM12B_SPI_MAJOR, 3, int)
+#define RFM12B_SET_GROUP_ID			_IOW(RFM12B_SPI_MAJOR, 4, int)
+#define RFM12B_SET_BAND_ID			_IOW(RFM12B_SPI_MAJOR, 5, int)
+#define RFM12B_SET_BIT_RATE			_IOW(RFM12B_SPI_MAJOR, 6, int)
 
 #endif // __RFM12B_IOCTL_H__

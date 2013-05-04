@@ -147,6 +147,8 @@ static int
 rfm12_try_sending(struct rfm12_data* rfm12);
 static void
 rfm12_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer);
+static int
+rfm12_reset(struct rfm12_data* rfm12);
 
 static struct rfm12_spi_message*
 rfm12_claim_spi_message(struct rfm12_data* rfm12)
@@ -350,10 +352,6 @@ rfm12_setup(struct rfm12_data* rfm12)
    u8 tx_buf[26];
    int err;
 
-   rfm12->group_id = group_id;
-   rfm12->band_id = band_id;
-   rfm12->bit_rate = bit_rate;
-
    rfm12->state = RFM12_STATE_CONFIG;
 
    spi_message_init(&msg);
@@ -463,6 +461,15 @@ pError:
    rfm12->state = RFM12_STATE_IDLE;
 
    return err;
+}
+
+static int
+rfm12_reset(struct rfm12_data* rfm12)
+{
+	rfm12_setup(rfm12);
+	rfm12_begin_sending_or_receiving(rfm12);
+	
+	return 0;
 }
 
 static void
@@ -1119,7 +1126,7 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	   case RFM12B_IOCTL_GET_STATS: {
 		   rfm12b_stats s;
-		   
+		   		   
 		   s.bytes_recvd = rfm12->bytes_recvd;
 		   s.pkts_recvd = rfm12->pkts_recvd;
 		   s.bytes_sent = rfm12->bytes_sent;
@@ -1135,6 +1142,69 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		   	   return -EACCES;
 		   
 		   break;
+	   }
+	   
+	   case RFM12B_GET_GROUP_ID: {
+		   int gid = rfm12->group_id;
+		   		   
+		   if (0 != copy_to_user((int*)arg, &gid, sizeof(gid)))
+		   	   return -EACCES;
+		   
+		   break;
+	   }
+	   
+	   case RFM12B_GET_BAND_ID: {
+	   	   int bid = rfm12->band_id;
+	   	   	   	   
+	   	   if (0 != copy_to_user((int*)arg, &bid, sizeof(bid)))
+	   	   	   return -EACCES;
+	   	   
+	   	   break;
+	   }
+	   
+	   case RFM12B_GET_BIT_RATE: {
+	   	   int br = rfm12->bit_rate;
+	   	   	   	   
+	   	   if (0 != copy_to_user((int*)arg, &br, sizeof(br)))
+	   	   	   return -EACCES;
+	   	   
+	   	   break;
+	   }
+	   
+	   case RFM12B_SET_GROUP_ID: {
+	   	   int gid;
+	   	   	   		   	   	   	   
+	   	   if (0 != copy_from_user(&gid, (int*)arg, sizeof(gid)))
+	   	   	   return -EACCES;
+	   	   		   	   
+	   	   rfm12->group_id = gid;
+	   	   rfm12_reset(rfm12);
+	   	   
+	   	   break;
+	   }
+	   
+	   case RFM12B_SET_BAND_ID: {
+	   	   int bid;
+	   	   	   	   
+	   	   if (0 != copy_from_user(&bid, (int*)arg, sizeof(bid)))
+	   	   	   return -EACCES;
+	   	   	   	   	   
+	   	   rfm12->band_id = bid;
+	   	   rfm12_reset(rfm12);
+	   	   
+	   	   break;
+	   }
+	    
+	   case RFM12B_SET_BIT_RATE: {
+	   	   int br;
+	   	   	   	   
+	   	   if (0 != copy_from_user(&br, (int*)arg, sizeof(br)))
+	   	   	   return -EACCES;
+	   	   
+	   	   rfm12->bit_rate = br;
+	   	   rfm12_reset(rfm12);
+	   	   
+	   	   break;
 	   }
 	   
 	   default:
@@ -1164,6 +1234,10 @@ rfm12_open(struct inode *inode, struct file *filp)
 	 	err = -EBUSY;
 		goto pError;
 	}
+	
+	rfm12->group_id = group_id;
+	rfm12->band_id = band_id;
+	rfm12->bit_rate = bit_rate;
 	
 	if (0 == err)
 	 	err = rfm12_setup(rfm12);

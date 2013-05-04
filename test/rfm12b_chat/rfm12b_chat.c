@@ -44,7 +44,7 @@ int set_nonblock_fd(int fd)
 
 int main(int argc, char** argv)
 {
-	int rfm12_fd, len, i, nfds, ipos;
+	int rfm12_fd, len, i, nfds, ipos, band_id, group_id, bit_rate, ioctl_err;
 	char* devname, ibuf[RF12_MAX_SLEN+1], obuf[RF12_MAX_RLEN+1], c;
 	fd_set fds;
 	
@@ -68,7 +68,7 @@ int main(int argc, char** argv)
 		}
 	
 		printf(
-			"\nsuccessfully opened %s as fd %i, type something!\n\n",
+			"\nsuccessfully opened %s as fd %i.\n\n",
 			devname, rfm12_fd
 		);
 	}
@@ -76,6 +76,26 @@ int main(int argc, char** argv)
 	fflush(stdout);
 	signal(SIGINT, sig_handler);
 	signal(SIGTERM, sig_handler);
+	
+	// this demonstrates how to use ioctl() to read and write config data
+	ioctl_err = 0;
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_GROUP_ID, &group_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BAND_ID, &band_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BIT_RATE, &bit_rate);
+	
+	// and this is how to reconfigure via ioctl()... we simply write the
+	// same data back that we read...
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_GROUP_ID, &group_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_BAND_ID, &band_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_BIT_RATE, &bit_rate);
+	
+	if (0 != ioctl_err) {
+		printf("\nerror during ioctl(): %s.", strerror(errno));
+		return -1;
+	}
+	
+	printf("RFM12B configured to GROUP %i, BAND %i, BITRATE: 0x%.2x.\n\n",
+		group_id, band_id, bit_rate);
 	
 	running = 1;
 	ipos = 0;

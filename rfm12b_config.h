@@ -81,7 +81,7 @@
   to a different integer.
 */
 
-#define RFM12B_SPI_MAJOR        154
+#define RFM12B_SPI_MAJOR        'r'
 #define RFM12B_NUM_SPI_MINORS   32
 
 /*
