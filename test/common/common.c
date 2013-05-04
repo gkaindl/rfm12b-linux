@@ -16,9 +16,9 @@ void print_stats(int fd)
 			"\tpkts_recvd: %lu\n"
 			"\tbytes_sent: %lu\n"
 			"\tpkts_sent: %lu\n"
-			"\tnum_overflows: %lu\n"
-			"\tnum_timeouts: %lu\n"
-			"\tnum_crc16_fail: %lu\n"
+			"\tnum_recv_overflows: %lu\n"
+			"\tnum_recv_timeouts: %lu\n"
+			"\tnum_recv_crc16_fail: %lu\n"
 			"\tnum_send_underruns: %lu\n"
 			"\tnum_send_timeouts: %lu\n"
 			"\tlow_battery: %u\n",

@@ -71,9 +71,6 @@ static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
 static DECLARE_BITMAP(minors, RFM12B_NUM_SPI_MINORS);
 
-DECLARE_WAIT_QUEUE_HEAD(rfm12_wait_read);
-DECLARE_WAIT_QUEUE_HEAD(rfm12_wait_write);
-
 typedef enum _rfm12_state_t {
    RFM12_STATE_NO_CHANGE		= 0,
    RFM12_STATE_CONFIG			= 1,
@@ -131,6 +128,8 @@ struct rfm12_data {
 	u8                   rxtx_watchdog_running;
 	struct timer_list	 retry_sending_timer;
 	u8					 retry_sending_running;
+	wait_queue_head_t	 wait_read;
+	wait_queue_head_t	 wait_write;
 };
 
 // forward declarations
@@ -327,23 +326,18 @@ rfm12_start_receiving(struct rfm12_data* rfm12)
 static int
 rfm12_start_sleeping_sync(struct rfm12_data* rfm12)
 {
-	unsigned long flags;
 	struct spi_transfer tr;
 	struct spi_message msg;
 	u8 tx_buf[2];
 	int err = 0;
-		
-	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
-	
+			
 	spi_message_init(&msg);
 	
 	tr = rfm12_make_spi_transfer(RF_SLEEP_MODE, tx_buf, NULL);
 	spi_message_add_tail(&tr, &msg);
 	
 	err = spi_sync(rfm12->spi, &msg);
-	
-	spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
-	
+		
 	return err;
 }
 
@@ -479,11 +473,11 @@ rfm12_release_when_safe(struct rfm12_data* rfm12)
 
 	platform_irq_cleanup(rfm12->irq_identifier);
 
-	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
-
 	rfm12_update_rxtx_watchdog(rfm12, 1);
 
 	rfm12_start_sleeping_sync(rfm12);
+
+	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
 
 	kfree(rfm12->in_buf);
 	rfm12->in_buf = rfm12->in_buf_pos = NULL;
@@ -559,7 +553,9 @@ rfm12_finish_send_or_recv_callback(void *arg)
    rfm12_spi_completion_common(spi_msg);
  
    if ((should_release = rfm12->should_release)) {
+	  spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
 	  rfm12_release_when_safe(rfm12);
+	  spin_lock_irqsave(&rfm12->rfm12_lock, flags);
    } else {
    	  rfm12_begin_sending_or_receiving(rfm12);
    }
@@ -602,7 +598,7 @@ rfm12_finish_receiving(struct rfm12_data* rfm12, int skip_packet)
 		 rfm12->bytes_recvd += num_bytes - 3;
 		  
 		 rfm12->in_cur_end = rfm12->in_buf_pos;
-		 wake_up_interruptible(&rfm12_wait_read);
+		 wake_up_interruptible(&rfm12->wait_read);
 	  } else {
 		 if (0 == skip_packet && 0 != rfm12->crc16)
 		 	rfm12->num_recv_crc16_fail++;
@@ -637,7 +633,7 @@ rfm12_finish_sending(struct rfm12_data* rfm12, int success)
 	   rfm12->pkts_sent++;
 	   rfm12->bytes_sent += len - RF_EXTRA_LEN;
 	   
-	   wake_up_interruptible(&rfm12_wait_write);
+	   wake_up_interruptible(&rfm12->wait_write);
    }
    
    err = rfm12_finish_send_recv_common(rfm12);
@@ -1010,7 +1006,7 @@ rfm12_read(struct file* filp, char __user *buf, size_t count, loff_t* f_pos)
    unsigned long flags;
 
    if (rfm12->in_cur_end == rfm12->in_buf)
-	  wait_event_interruptible(rfm12_wait_read,
+	  wait_event_interruptible(rfm12->wait_read,
 			(rfm12->in_cur_end > rfm12->in_buf));
 
    if (rfm12->in_cur_end <= rfm12->in_buf)
@@ -1055,7 +1051,7 @@ size_t count, loff_t *f_pos)
 	bytes_to_copy = (RF_MAX_DATA_LEN < count) ? RF_MAX_DATA_LEN : count;
 	
 	if (DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) < bytes_to_copy + RF_EXTRA_LEN)
-		wait_event_interruptible(rfm12_wait_write,
+		wait_event_interruptible(rfm12->wait_write,
 			DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= bytes_to_copy + RF_EXTRA_LEN);
 
 	copied = bytes_to_copy - copy_from_user(
@@ -1101,7 +1097,18 @@ size_t count, loff_t *f_pos)
 static unsigned int
 rfm12_poll(struct file* filp, poll_table* wait)
 {
-   return 0;
+	unsigned int mask = 0;
+	struct rfm12_data* rfm12 = (struct rfm12_data*)filp->private_data;
+	
+	poll_wait(filp, &rfm12->wait_read,  wait);
+	poll_wait(filp, &rfm12->wait_write, wait);
+	
+	if (rfm12->in_cur_end > rfm12->in_buf)
+		mask |= POLLIN | POLLRDNORM;
+	if (DATA_BUF_SIZE - (rfm12->out_cur_end - rfm12->out_buf) >= 1 + RF_EXTRA_LEN)
+		mask |= POLLOUT | POLLWRNORM;
+	
+	return mask;
 }
 
 static long
@@ -1153,68 +1160,67 @@ rfm12_open(struct inode *inode, struct file *filp)
 		}
 	}
 	if (0 == err) {
-	   if (0 != rfm12->open || 0 != rfm12->should_release) {
-		 err = -EBUSY;
-		 goto pError;
-	   }
-
-	  spin_lock_irqsave(&rfm12->rfm12_lock, flags);
-
-	  if (0 == err)
-		 err = rfm12_setup(rfm12);
-
-	  if (err) {
-		 spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
-		 goto pError;
-	  }
-
-		if (!rfm12->in_buf) {
-			rfm12->in_buf = kmalloc(2*DATA_BUF_SIZE, GFP_KERNEL);
-			if (!rfm12->in_buf) {
+	if (0 != rfm12->open || 0 != rfm12->should_release) {
+	 	err = -EBUSY;
+		goto pError;
+	}
+	
+	if (0 == err)
+	 	err = rfm12_setup(rfm12);
+	
+	if (err) {
+	 	goto pError;
+	}
+	
+	spin_lock_irqsave(&rfm12->rfm12_lock, flags);
+	
+	if (!rfm12->in_buf) {
+		 	rfm12->in_buf = kmalloc(2*DATA_BUF_SIZE, GFP_KERNEL);
+		 	if (!rfm12->in_buf) {
 				dev_dbg(&rfm12->spi->dev, "open/ENOMEM\n");
-				err = -ENOMEM;
+					err = -ENOMEM;
 			}
-
-		 rfm12->out_buf = rfm12->in_buf + DATA_BUF_SIZE;
-
-		 rfm12->out_buf_pos = rfm12->out_buf;
-		 rfm12->in_buf_pos = rfm12->in_buf;
+		
+		 	rfm12->out_buf = rfm12->in_buf + DATA_BUF_SIZE;
+		
+		 	rfm12->out_buf_pos = rfm12->out_buf;
+		 	rfm12->in_buf_pos = rfm12->in_buf;
 		}
-
+		
 		if (0 == err) {
 			rfm12->open++;
 			filp->private_data = rfm12;
 			nonseekable_open(inode, filp);
 		}
-
+		
 		if (1 == rfm12->open) {
-		 rfm12->bytes_recvd = 0;
-		 rfm12->pkts_recvd = 0;
-		 rfm12->bytes_sent = 0;
-		 rfm12->pkts_sent = 0;
-		 rfm12->num_recv_overflows = 0;
-		 rfm12->num_recv_timeouts = 0;
-		 rfm12->num_recv_crc16_fail = 0;
-		 rfm12->num_send_underruns = 0;
-		 rfm12->num_send_timeouts = 0;
-		 rfm12->in_cur_num_bytes = 0;
-		 rfm12->rxtx_watchdog_running = 0;
-		 rfm12->retry_sending_running = 0;
-		 rfm12->crc16 = 0;
-		 rfm12->last_status = 0;
-		 rfm12->should_release = 0;
-		 rfm12->in_cur_len_pos = rfm12->in_buf;
-		 rfm12->in_cur_end = rfm12->in_buf;
-		 rfm12->out_cur_end = rfm12->out_buf;
-	  }
-
-	  spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
-
-	  if (0 == err)
-		 rfm12_begin_sending_or_receiving(rfm12);
-
-	  err = platform_irq_init(rfm12->irq_identifier, (void*)rfm12);
-	  has_irq = (0 == err);
+			rfm12->bytes_recvd = 0;
+		 	rfm12->pkts_recvd = 0;
+		 	rfm12->bytes_sent = 0;
+		 	rfm12->pkts_sent = 0;
+		 	rfm12->num_recv_overflows = 0;
+		 	rfm12->num_recv_timeouts = 0;
+		 	rfm12->num_recv_crc16_fail = 0;
+		 	rfm12->num_send_underruns = 0;
+		 	rfm12->num_send_timeouts = 0;
+		 	rfm12->in_cur_num_bytes = 0;
+		 	rfm12->rxtx_watchdog_running = 0;
+		 	rfm12->retry_sending_running = 0;
+		 	rfm12->crc16 = 0;
+		 	rfm12->last_status = 0;
+		 	rfm12->should_release = 0;
+		 	rfm12->in_cur_len_pos = rfm12->in_buf;
+		 	rfm12->in_cur_end = rfm12->in_buf;
+		 	rfm12->out_cur_end = rfm12->out_buf;
+		}
+		
+		spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+		
+		if (0 == err)
+			rfm12_begin_sending_or_receiving(rfm12);
+		
+		err = platform_irq_init(rfm12->irq_identifier, (void*)rfm12);
+		has_irq = (0 == err);
 	} else
 		pr_debug("rfm12: nothing for minor %d\n", iminor(inode));
 
@@ -1247,7 +1253,9 @@ rfm12_release(struct inode *inode, struct file *filp)
 	  
 	  if (RFM12_STATE_LISTEN == rfm12->state ||
 	  	  RFM12_STATE_IDLE == rfm12->state) {
-		  rfm12_release_when_safe(rfm12);	  	  
+		  spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
+		  rfm12_release_when_safe(rfm12);
+		  spin_lock_irqsave(&rfm12->rfm12_lock, flags);  	  
 	  }
 
 	  spin_unlock_irqrestore(&rfm12->rfm12_lock, flags);
@@ -1305,6 +1313,9 @@ rfm12_probe(struct spi_device *spi)
 	spin_lock_init(&rfm12->rfm12_lock);
 
 	INIT_LIST_HEAD(&rfm12->device_entry);
+	
+	init_waitqueue_head(&rfm12->wait_read);
+	init_waitqueue_head(&rfm12->wait_write);
 
 	mutex_lock(&device_list_lock);
 	minor = find_first_zero_bit(minors, RFM12B_NUM_SPI_MINORS);
