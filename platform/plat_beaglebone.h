@@ -98,7 +98,7 @@ spi_rfm12_init_pinmux_settings(void)
 				pin_conf->pin_addr
 			);
 		
-			(void)spi_cleanup_pinmux_settings();
+			(void)spi_rfm12_cleanup_pinmux_settings();
 		
 			return -EBUSY;
 		}
@@ -110,7 +110,7 @@ spi_rfm12_init_pinmux_settings(void)
 				pin_conf->pin_addr
 			);
 			
-			(void)spi_cleanup_pinmux_settings();
+			(void)spi_rfm12_cleanup_pinmux_settings();
 			
 			return -EBUSY;
 		}
