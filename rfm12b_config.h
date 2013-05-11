@@ -6,12 +6,16 @@
   whatever board you are using. You can further edit hardware-specific
   configuration in the following files.
   
+  IMPORTANT: If you don't set this to the board you actually want to
+             build for, you'll get a segfault or oops when you try to
+             insert the module!
+  
   BOARD             NUMBER          HARDWARE-SPECIFICS
   
   Raspberri Pi      1               platform/plat_raspberrypi.h
   Beaglebone        2               platform/plat_beaglebone.h
 */
-#define RFM12B_BOARD        1
+#define RFM12B_BOARD        0
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)

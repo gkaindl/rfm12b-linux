@@ -5,7 +5,6 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/spi/spi.h>
-#include <mach/gpio.h>
 
 struct spi_rfm12_active_board {
 	u16 irq;

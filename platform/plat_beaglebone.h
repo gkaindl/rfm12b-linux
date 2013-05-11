@@ -13,7 +13,7 @@
 /*
 * default config for beaglebone (one RFM12 module)
 *
-*	p9/27:	rfm12b IRQ
+*  p9/27:  rfm12b IRQ
 *  p9/29:  mosi/miso
 *  p9/30:  mosi/miso
 *  p9/31:  sclk

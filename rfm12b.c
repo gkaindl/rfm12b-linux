@@ -162,6 +162,14 @@ rfm12_reset(struct rfm12_data* rfm12);
 static void
 rfm12_apply_crc16(struct rfm12_data* rfm12, unsigned char* ptr, unsigned len);
 
+#ifndef __devinit
+#define __devinit
+#endif
+
+#ifndef __devexit
+#define __devexit
+#endif
+
 static struct rfm12_spi_message*
 rfm12_claim_spi_message(struct rfm12_data* rfm12)
 {
