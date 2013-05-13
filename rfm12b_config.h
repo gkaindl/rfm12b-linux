@@ -14,8 +14,9 @@
   
   Raspberri Pi      1               platform/plat_raspberrypi.h
   Beaglebone        2               platform/plat_beaglebone.h
+  Beaglebone Black  3               platform/plat_beaglebone.h
 */
-#define RFM12B_BOARD        0
+#define RFM12B_BOARD        3
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
@@ -114,20 +115,22 @@
 
 /****************************** DON'T EDIT BELOW **************************/
 
-#if RFM12B_BOARD<=0 || RFM12B_BOARD>2
+#if RFM12B_BOARD<=0 || RFM12B_BOARD>3
 #error Please specify your board. (RFM12B_BOARD in rfm12b_config.h).
 #else
 #define MODULE_BOARD_CONFIGURED 1
 #endif
 
 #if defined(MODULE_BOARD_CONFIGURED)
+#include <linux/version.h>
+
 #if BUILD_MODULE
 #include "platform/platform.h"
 
 #if RFM12B_BOARD==1
 #include "platform/plat_raspberrypi.h"
 
-#elif RFM12B_BOARD==2
+#elif RFM12B_BOARD==2 || RFM12B_BOARD==3
 #include "platform/plat_beaglebone.h"
 #endif
 
@@ -136,8 +139,12 @@
 
 #if RFM12B_BOARD==1
 #define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".0.1"
-#elif RFM12B_BOARD==2
+#elif RFM12B_BOARD==2 || RFM12B_BOARD==3
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
 #define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".2.1"
+#else
+#define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".1.1"
+#endif
 #endif
 
 #endif // MODULE_BOARD_CONFIGURED

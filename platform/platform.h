@@ -7,17 +7,17 @@ platform_module_init(void);
 static int
 platform_module_cleanup(void);
 
-static int
+static void*
 platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs);
 
 static int
-platform_irq_init(int identifier, void* rfm12_data);
+platform_irq_init(void* identifier, void* rfm12_data);
 
 static int
-platform_irq_handled(int identifier);
+platform_irq_handled(void* identifier);
 
 static int
-platform_irq_cleanup(int identifier);
+platform_irq_cleanup(void* identifier);
 
 struct spi_rfm12_board_config {
 	u16 irq_pin;

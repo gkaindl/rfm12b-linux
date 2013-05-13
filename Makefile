@@ -2,11 +2,12 @@
 # modules on the fly.
 
 obj-m += rfm12b.o
-# rfm12b-objs := mux.o control.o 
 
 KVERSION := $(shell uname -r)
-INCLUDE += -I/usr/src/linux-headers-$(KVERSION)/arch/arm/mach-omap2/include
-INCLUDE += -I/usr/src/linux-headers-$(KVERSION)/arch/arm/plat-omap/include
+
+# 3.7 moved version.h to a different location
+if [ -f /lib/modules/$(KVERSION)/build/include/generated/uapi/linux/version.h ]; then \
+	INCLUDE += -I/lib/modules/$(KVERSION)/build/include/generated/uapi/
 
 all:
 	make -C /lib/modules/$(KVERSION)/build $(INCLUDE) M=$(PWD) modules

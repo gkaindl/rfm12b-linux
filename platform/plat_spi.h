@@ -10,6 +10,7 @@ struct spi_rfm12_active_board {
 	u16 irq;
 	void* irq_data;
 	struct spi_device* spi_device;
+	int idx;
 	struct {
 		u8 gpio_claimed:1;
 		u8 irq_claimed:1;
@@ -40,11 +41,9 @@ spi_rfm12_deregister_spi_devices(void);
 static irqreturn_t
 spi_rfm12_irq_handler(int irq, void* dev_id)
 {
-	int idx = (int)dev_id;
+	struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)dev_id;
 	
-	if (idx >= 0 && idx < NUM_RFM12_BOARDS) {
-		struct spi_rfm12_active_board* brd = &active_boards[idx];
-		
+	if (NULL != brd->irq_data) {	
 		if (brd->state.irq_enabled) {
 			brd->state.irq_enabled = 0;
 			disable_irq_nosync(brd->irq);
@@ -57,15 +56,11 @@ spi_rfm12_irq_handler(int irq, void* dev_id)
 }
 
 static int
-platform_irq_handled(int identifier)
+platform_irq_handled(void* identifier)
 {
-	struct spi_rfm12_active_board* brd = &active_boards[identifier];
-	struct spi_rfm12_board_config* cfg = &board_configs[identifier];
-	
-	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
-		return -ENODEV;
-	}
-	
+	struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
+	struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
+		
 	if (0 == brd->state.irq_enabled) {
 		if (0 == gpio_get_value(cfg->irq_pin))
 			rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
@@ -131,7 +126,7 @@ spi_rfm12_cleanup_irq_pins(void)
 	int i;
 	
 	for (i=0; i<NUM_RFM12_BOARDS; i++) {
-		(void)platform_irq_cleanup(i);
+		(void)platform_irq_cleanup(&active_boards[i]);
 		
 		if (active_boards[i].state.gpio_claimed) {
 			gpio_free(board_configs[i].irq_pin);
@@ -145,7 +140,11 @@ spi_rfm12_cleanup_irq_pins(void)
 static int
 platform_module_init(void)
 {
-	int err;
+	int err, i;
+		
+	for (i=0; i<NUM_RFM12_BOARDS; i++) {
+		active_boards[i].idx = i;
+	}
 	
 	err = spi_rfm12_init_pinmux_settings();
 	if (0 != err) goto muxFailed;
@@ -176,7 +175,7 @@ platform_module_cleanup(void)
 	return 0;
 }
 
-static int
+static void*
 platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
 {
 	int i;
@@ -184,37 +183,34 @@ platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
 	for (i=0; i<NUM_RFM12_BOARDS; i++) {
 		if (spi_bus == board_configs[i].spi_bus &&
 			spi_cs == board_configs[i].spi_cs)
-			return i;
+			return &active_boards[i];
 	}
 	
-	return -1;
+	return NULL;
 }
 
 static int
-platform_irq_init(int identifier, void* rfm12_data)
+platform_irq_init(void* identifier, void* rfm12_data)
 {
 	int err;
-	struct spi_rfm12_active_board* brd = &active_boards[identifier];
-	struct spi_rfm12_board_config* cfg = &board_configs[identifier];
-
-	if (identifier < 0 || identifier > NUM_RFM12_BOARDS)
-		return -ENODEV;
+	struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
+	struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
 
 	if (brd->state.irq_claimed)
 		return -EBUSY;
 
-	err = request_irq(
+	err = request_any_context_irq(
 		brd->irq,
 		spi_rfm12_irq_handler,
 		IRQF_TRIGGER_FALLING | IRQF_DISABLED,
 		RFM12B_DRV_NAME,
-		(void*)identifier
+		(void*)brd
 	);
 
-	if (0 == err) {
+	if (0 <= err) {
 		brd->state.irq_claimed = 1;
 		brd->state.irq_enabled = 1;
-		brd->irq_data = rfm12_data;
+		brd->irq_data = rfm12_data;		
 	} else
 		printk(
 			KERN_ALERT RFM12B_DRV_NAME
@@ -223,26 +219,26 @@ platform_irq_init(int identifier, void* rfm12_data)
 		);
 
 	if (0 == gpio_get_value(cfg->irq_pin))
-		spi_rfm12_irq_handler(brd->irq, (void*)identifier);
+		spi_rfm12_irq_handler(brd->irq, (void*)brd);
 
 	return err;	
 }
 
 static int
-platform_irq_cleanup(int identifier)
+platform_irq_cleanup(void* identifier)
 {
-	int err = 0;
+	int err = 0;	
+	struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
 	
-	if (identifier < 0 || identifier > NUM_RFM12_BOARDS) {
-		err = -ENODEV;
-	} else {
-		struct spi_rfm12_active_board* brd = &active_boards[identifier];
-		
-		if (brd->state.irq_claimed) {
-			free_irq(brd->irq, (void*)identifier);
-			brd->state.irq_claimed = 0;
-			brd->irq_data = NULL;
+	if (brd->state.irq_claimed) {
+		if (brd->state.irq_enabled) {
+			disable_irq(brd->irq);
+			brd->state.irq_enabled = 0;
 		}
+		
+		free_irq(brd->irq, (void*)brd);
+		brd->state.irq_claimed = 0;		
+		brd->irq_data = NULL;
 	}
 	
 	return err;

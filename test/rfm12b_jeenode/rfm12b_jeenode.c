@@ -5,7 +5,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <unistd.h>
-#include <stdio.h>
+#include <sys/select.h>
 
 #include "../common/common.h"
 #include "../../rfm12b_config.h"
