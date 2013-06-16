@@ -83,9 +83,9 @@ int main(int argc, char** argv)
 	signal(SIGTERM, sig_handler);
 	
 	ioctl_err = 0;
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_GROUP_ID, &group_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BAND_ID, &band_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BIT_RATE, &bit_rate);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_GROUP_ID, &group_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_BAND_ID, &band_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_BIT_RATE, &bit_rate);
 	
 	if (ioctl_err) {
 		printf("\nioctl() error: %s.\n", strerror(errno));
@@ -93,7 +93,7 @@ int main(int argc, char** argv)
 	}
 	
 	// activate jeenode-compatible mode by giving this module a jeenode id
-	if (ioctl(rfm12_fd, RFM12B_SET_JEE_ID, &jee_id)) {
+	if (ioctl(rfm12_fd, RFM12B_IOCTL_SET_JEE_ID, &jee_id)) {
 		printf("\nioctl() error while setting jeenode id: %s.\n",
 			strerror(errno));
 		return -1;
@@ -113,7 +113,6 @@ int main(int argc, char** argv)
 		
 		nfds = select(rfm12_fd+1, &fds, NULL, NULL, NULL);
 				
-		// TODO: test without "running" –> seems to give kernel panic
 		if (nfds < 0 && running) {
 			printf("\nan error happened during select: %s.\n\n",
 				strerror(errno));
@@ -137,7 +136,7 @@ int main(int argc, char** argv)
 						// you supply a length different from the amount of bytes you
 						// actually write().
 						ibuf[0] = jee_id | RFM12B_JEE_HDR_ACK_BIT;	// hdr
-						ibuf[1] = ipos-2;							// len of payload
+						ibuf[1] = ipos-2;										// len of payload
 						
 						len = write(rfm12_fd, ibuf, ipos);
 						

@@ -16,7 +16,7 @@
   Beaglebone        2               platform/plat_beaglebone.h
   Beaglebone Black  3               platform/plat_beaglebone.h
 */
-#define RFM12B_BOARD        0
+#define RFM12B_BOARD        3
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
@@ -26,7 +26,7 @@
 /*
   The textual part of the device name in /dev. E.g., with the default
   setting, the device name for an RFM12b module on SPI bus 2, CS 1 would
-  be /dev/rfm12.2.1
+  be /dev/rfmb12.2.1
 */
 #define RFM12B_DEV_NAME     "rfm12b"
 
@@ -69,9 +69,34 @@
 #define RFM12B_DEFAULT_BIT_RATE  0x06
 
 /*
-  TODO: document jee-compatible mode
+  Whether Jee-compatible mode is enabled by default or not. You can
+  still enable Jee-compatible mode for a board either via ioctl() or
+  by passing a parameter to the module when loading it.
+  
+  Jee-compatible mode differs from normal operation by these traits
+  
+  1) The first two bytes of a packet (header and length) are passed
+     to user-space via read(), so you can inspect them.
+  2) When you pass data to send via write(), the first two bytes of
+     the data are the Jee header and length bytes. If the length byte
+     does not match the actual packet length, it will be automatically
+     fixed by the driver.
+  3) The driver can automatically send Jee ACKs for packets that
+     request them (see RFM12B_DEFAULT_JEE_AUTOACK).
 */
 #define RFM12B_DEFAULT_JEE_ID    0
+
+/*
+  Whether the driver should automatically send ACKs for packets that
+  request them when in Jee-compatible mode. You can change this per
+  board via ioctl() or change the default by passing a module parameter
+  on load.
+  
+  If Jee-compatible mode is enabled (see RFM12B_DEFAULT_JEE_ID), the
+  driver can automatically send ACKs for packets that request them, so
+  you don't have to worry about this in your user-space program.
+*/
+#define RFM12B_DEFAULT_JEE_AUTOACK  1
 
 /*
   SPI settings that the driver will use. You shouldn't need to change

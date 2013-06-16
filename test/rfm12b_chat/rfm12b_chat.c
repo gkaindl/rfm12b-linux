@@ -79,15 +79,15 @@ int main(int argc, char** argv)
 	
 	// this demonstrates how to use ioctl() to read and write config data
 	ioctl_err = 0;
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_GROUP_ID, &group_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BAND_ID, &band_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_GET_BIT_RATE, &bit_rate);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_GROUP_ID, &group_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_BAND_ID, &band_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_GET_BIT_RATE, &bit_rate);
 	
 	// and this is how to reconfigure via ioctl()... we simply write the
 	// same data back that we read...
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_GROUP_ID, &group_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_BAND_ID, &band_id);
-	ioctl_err |= ioctl(rfm12_fd, RFM12B_SET_BIT_RATE, &bit_rate);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_SET_GROUP_ID, &group_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_SET_BAND_ID, &band_id);
+	ioctl_err |= ioctl(rfm12_fd, RFM12B_IOCTL_SET_BIT_RATE, &bit_rate);
 	
 	if (0 != ioctl_err) {
 		printf("\nerror during ioctl(): %s.", strerror(errno));
@@ -108,7 +108,6 @@ int main(int argc, char** argv)
 		
 		nfds = select(rfm12_fd+1, &fds, NULL, NULL, NULL);
 				
-		// TODO: test without "running" –> seems to give kernel panic
 		if (nfds < 0 && running) {
 			printf("\nan error happened during select: %s.\n\n",
 				strerror(errno));

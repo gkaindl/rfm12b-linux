@@ -13,10 +13,12 @@
 /*
 * default config for raspberry pi (one RFM12 module)
 *
+*	Raspberry Pi					RFM12B
+* ---------------------------------------------------------
 *  p1/17:  +3.3V
 *  p1/19:  mosi
-*  p9/21:  miso
-*  p1/22:  rfm12b IRQ (gpio 25)
+*  p1/21:  miso
+*  p1/22:  irq (gpio 25)
 *  p1/23:  sclk
 *  p1/25:  gnd
 *  p1/26:  cs (ce1)
@@ -31,7 +33,7 @@ struct spi_rfm12_board_config board_configs[NUM_RFM12_BOARDS] = {
 	{
 		.irq_pin		= 25,	// gpio 25
 		.spi_bus		= 0,	// spi port on P1 header
-		.spi_cs			= 1		// CS 1
+		.spi_cs		= 1	// CS 1
 	}
 };
 

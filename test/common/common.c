@@ -21,7 +21,7 @@ void print_stats(int fd)
 			"\tnum_recv_crc16_fail: %lu\n"
 			"\tnum_send_underruns: %lu\n"
 			"\tnum_send_timeouts: %lu\n"
-			"\tlow_battery: %u\n",
+			"\tlow_battery: %lu\n",
 			s.bytes_recvd, s.pkts_recvd, s.bytes_sent, s.pkts_sent,
 			s.num_recv_overflows, s.num_recv_timeouts, s.num_recv_crc16_fail,
 			s.num_send_underruns, s.num_send_timeouts,
