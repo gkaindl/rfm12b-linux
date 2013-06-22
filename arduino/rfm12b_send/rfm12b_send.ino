@@ -91,7 +91,7 @@ void loop()
    if (sendTimer.poll(SEND_DELAY))
      needToSend = 1;
    
-   if (needToSend && rf12_canSend()) {
+   if (needToSend && (rf12_recvDone() || rf12_canSend())) {
      needToSend = 0;
      
      for (int i=0; i<PACKET_LEN; i++) {
@@ -102,6 +102,7 @@ void loop()
      
      sendLed(1);
      rf12_sendStart(0, payload, PACKET_LEN);
+     rf12_sendWait(1);
      delay(LED_DELAY);
      sendLed(0);  
      
