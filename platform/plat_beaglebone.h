@@ -30,13 +30,17 @@
 #define NUM_RFM12_BOARDS			1
 
 /*
-* default config for beaglebone (one RFM12 module)
+*  default config for beaglebone (one RFM12 module)
 *
-*  p9/27:  rfm12b IRQ
-*  p9/29:  mosi/miso
-*  p9/30:  mosi/miso
-*  p9/31:  sclk
-*  p9/42:  cs
+*  Beaglebone            RFM12B
+*  ---------------------------------
+*  P9/1                  GND
+*  P9/3                  VDD (+3.3V)
+*  P9/27                 nIRQ
+*  P9/29                 SDO
+*  P9/30                 SDI
+*  P9/31                 SCK
+*  P9/42                 nSEL
 */
 
 struct spi_rfm12_board_config board_configs[NUM_RFM12_BOARDS] = {

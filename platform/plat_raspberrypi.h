@@ -30,17 +30,17 @@
 #define NUM_RFM12_BOARDS			1
 
 /*
-* default config for raspberry pi (one RFM12 module)
+*  default config for raspberry pi (one RFM12 module)
 *
-*	Raspberry Pi					RFM12B
-* ---------------------------------------------------------
-*  p1/17:  +3.3V
-*  p1/19:  mosi
-*  p1/21:  miso
-*  p1/22:  irq (gpio 25)
-*  p1/23:  sclk
-*  p1/25:  gnd
-*  p1/26:  cs (ce1)
+*  Raspberry Pi          RFM12B
+*  ---------------------------------
+*  P1/17                 VDD (+3.3V)
+*  P1/19                 SDI
+*  P1/21                 SDO
+*  P1/22                 nIRQ
+*  P1/23                 SCK
+*  P1/25                 GND
+*  P1/26                 nSEL
 *
 *  make sure the SPI driver is loaded before loading this
 *  module!
