@@ -69,30 +69,30 @@ int pPos;
 
 static void recvLed(int state)
 {
-  leds.mode(OUTPUT);
-  leds.digiWrite(state);
+   leds.mode(OUTPUT);
+   leds.digiWrite(state);
 }
 
 static void sendLed(int state)
 {
-  leds.mode2(OUTPUT);
-  leds.digiWrite2(!state);
+   leds.mode2(OUTPUT);
+   leds.digiWrite2(!state);
 }
 
 static void printBuffer(byte* buf, int len)
 {
-    for (byte i = 0; i < len; ++i) {
-       Serial.print(buf[i]);
-       Serial.print(' ');    
-    }
+   for (byte i = 0; i < len; ++i) {
+      Serial.print(buf[i]);
+      Serial.print(' ');    
+   }
     
-    Serial.println();
+   Serial.println();
 }
 
 void setup()
 {
-  Serial.begin(57600);
-  rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
+   Serial.begin(57600);
+   rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
 }
 
 void loop()
@@ -112,34 +112,32 @@ void loop()
    lastMillis = now;
   
    if (rf12_recvDone() && rf12_crc == 0) {   
-     Serial.print("RECV ");
-     printBuffer((byte*)rf12_data, rf12_len);
-     recvLed(1);
-     recvLedMillis = LED_DELAY;
+      Serial.print("RECV ");
+      printBuffer((byte*)rf12_data, rf12_len);
+      recvLed(1);
+      recvLedMillis = LED_DELAY;
    }
   
    if (sendTimer.poll(SEND_DELAY))
-     needToSend = 1;
+      needToSend = 1;
    
    if (needToSend && rf12_canSend()) {
-     needToSend = 0;
+      needToSend = 0;
      
-     for (int i=0; i<PACKET_LEN; i++) {
-        payload[i] = (pPos + i) % 255;
-     }
+      for (int i=0; i<PACKET_LEN; i++) {
+         payload[i] = (pPos + i) % 255;
+      }
      
-     pPos = (pPos + 1) % 255;
+      pPos = (pPos + 1) % 255;
      
-     sendLed(1);
-     sendLedMillis = LED_DELAY;
+      sendLed(1);
+      sendLedMillis = LED_DELAY;
      
-     rf12_sendStart(0, payload, PACKET_LEN);
-     rf12_sendWait(1);
-     rf12_recvDone();
+      rf12_sendStart(0, payload, PACKET_LEN);
+      rf12_sendWait(1);
+      rf12_recvDone();
      
-     Serial.print("SEND ");
-     printBuffer((byte*)payload, PACKET_LEN);
- }
+      Serial.print("SEND ");
+      printBuffer((byte*)payload, PACKET_LEN);
+   }
 }
-
-

@@ -60,55 +60,55 @@ int pPos;
 
 static void recvLed(int state)
 {
-  leds.mode(OUTPUT);
-  leds.digiWrite(state);
+   leds.mode(OUTPUT);
+   leds.digiWrite(state);
 }
 
 static void sendLed(int state)
 {
-  leds.mode2(OUTPUT);
-  leds.digiWrite2(!state);
+   leds.mode2(OUTPUT);
+   leds.digiWrite2(!state);
 }
 
 static void printBuffer(byte* buf, int len)
 {
-    for (byte i = 0; i < len; ++i) {
-       Serial.print(buf[i]);
-       Serial.print(' ');    
-    }
-    
-    Serial.println();
+   for (byte i = 0; i < len; ++i) {
+      Serial.print(buf[i]);
+      Serial.print(' ');    
+   }
+ 
+   Serial.println();
 }
 
 void setup()
 {
-  Serial.begin(57600);
-  rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
+   Serial.begin(57600);
+   rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
 }
 
 void loop()
 { 
    if (sendTimer.poll(SEND_DELAY))
-     needToSend = 1;
+      needToSend = 1;
    
    if (needToSend && (rf12_recvDone() || rf12_canSend())) {
-     needToSend = 0;
+      needToSend = 0;
      
-     for (int i=0; i<PACKET_LEN; i++) {
-        payload[i] = (pPos + i) % 255;
-     }
-     
-     pPos = (pPos + 1) % 255;
-     
-     sendLed(1);
-     rf12_sendStart(0, payload, PACKET_LEN);
-     rf12_sendWait(1);
-     delay(LED_DELAY);
-     sendLed(0);  
-     
-     Serial.print("SEND ");
-     printBuffer((byte*)payload, PACKET_LEN);
- }
+      for (int i=0; i<PACKET_LEN; i++) {
+         payload[i] = (pPos + i) % 255;
+      }
+        
+      pPos = (pPos + 1) % 255;
+   
+      sendLed(1);
+      rf12_sendStart(0, payload, PACKET_LEN);
+      rf12_sendWait(1);
+      delay(LED_DELAY);
+      sendLed(0);  
+        
+      Serial.print("SEND ");
+      printBuffer((byte*)payload, PACKET_LEN);
+   }
 }
 
 

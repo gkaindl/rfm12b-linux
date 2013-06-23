@@ -40,11 +40,11 @@ rfm12b_write: rfm12b_write/rfm12b_write.o $(OBJ)
 rfm12b_echo: rfm12b_echo/rfm12b_echo.o $(OBJ)
 	$(dir)
 	gcc $< $(OBJ) -o bin/$@  
-	
+
 rfm12b_chat: rfm12b_chat/rfm12b_chat.o $(OBJ)
 	$(dir)
 	gcc $< $(OBJ) -o bin/$@   
-	
+
 rfm12b_jeenode: rfm12b_jeenode/rfm12b_jeenode.o $(OBJ)
 	$(dir)
 	gcc $< $(OBJ) -o bin/$@      

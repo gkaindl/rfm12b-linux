@@ -51,43 +51,42 @@ Port leds (1);
 
 static void recvLed(int state)
 {
-  leds.mode(OUTPUT);
-  leds.digiWrite(state);
+   leds.mode(OUTPUT);
+   leds.digiWrite(state);
 }
 
 static void sendLed(int state)
 {
-  leds.mode2(OUTPUT);
-  leds.digiWrite2(!state);
+   leds.mode2(OUTPUT);
+   leds.digiWrite2(!state);
 }
 
 static void printBuffer(byte* buf, int len)
 {
-    for (byte i = 0; i < len; ++i) {
-       Serial.print(buf[i]);
-       Serial.print(' ');    
-    }
+   for (byte i = 0; i < len; ++i) {
+      Serial.print(buf[i]);
+      Serial.print(' ');    
+   }
 
-    Serial.println();
+   Serial.println();
 }
 
 void setup()
 {
-  Serial.begin(57600);
-  rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
+   Serial.begin(57600);
+   rf12_initialize(NODE_ID, BAND_ID, GROUP_ID);
 }
 
 void loop()
 {
-  if (rf12_recvDone() && rf12_crc == 0) {
-    recvLed(1);
+   if (rf12_recvDone() && rf12_crc == 0) {
+      recvLed(1);
   
-    Serial.print("RECV ");
-    printBuffer((byte*)rf12_data, rf12_len);
+      Serial.print("RECV ");
+      printBuffer((byte*)rf12_data, rf12_len);
     
-    delay(LED_DELAY);
-    
-    recvLed(0);  
-  }
-}
+      delay(LED_DELAY);
 
+      recvLed(0);  
+   }
+}
