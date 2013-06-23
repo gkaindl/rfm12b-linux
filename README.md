@@ -4,7 +4,9 @@ A Linux kernel driver for the [RFM12B](http://www.hoperf.com/rf_fsk/fsk/21.htm) 
 
 Currently, Raspberry Pi, Beaglebone and Beaglebone Black are supported, but it should be easy to support additional boards by adding the necessary setup code (e.g. setting up pinmuxing, etc…).
 
-The driver can be used to communicate with [JeeLib](https://github.com/jcw/jeelib) on the Arduino platform.
+The driver can be used to communicate with [JeeLib](https://github.com/jcw/jeelib) on the Arduino platform. Its interaction with the RFM12B board is based heavily on the fantastic work in JeeLib!
+
+A demo video is available on [YouTube](http://www.youtube.com/watch?v=5aeSIBstJS0).
 
 ## Overall Functionality
 
@@ -131,6 +133,9 @@ I've tested the driver on the following setups, usually running it for a couple 
   </tr>
   <tr>
     <td>Beaglebone Black</td><td>Ubuntu 13.04</td><td>3.8.12-bone21</td>
+  </tr>
+  <tr>
+    <td>Beaglebone Black</td><td>Ubuntu 13.04</td><td>3.8.12-bone22</td>
   </tr>
 </table>
 
