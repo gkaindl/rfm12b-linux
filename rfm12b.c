@@ -1150,6 +1150,9 @@ size_t count, loff_t *f_pos)
 	} else {
 		offset = 2;
 	}
+	
+	if (count < offset)
+	   return -EINVAL;
 
 	bytes_to_copy =
 		(RF_MAX_DATA_LEN+2-offset < count) ? RF_MAX_DATA_LEN+2-offset : count;
