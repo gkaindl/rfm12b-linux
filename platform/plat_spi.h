@@ -17,6 +17,13 @@
 *  along with rfm12b-linux.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+/*
+	This is the implementation of platform.h for normal SPI-master drivers,
+	using the kernel's SPI-master interface. See platform.h for extra info.
+	
+	We don't use thr SPI driver's IRQ functionality, but handle it ourselves.
+*/
+
 #if !defined(__RFM12_PLAT_SPI_H__)
 #define __RFM12_PLAT_SPI_H__
 

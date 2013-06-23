@@ -17,6 +17,18 @@
 *  along with rfm12b-linux.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+/*
+   This file contains declarations for platform-specific setup and
+   management code.
+   
+   It probably doesn't make as much sense now anymore as it did when I
+   started to structure the code like this, but originally, I also supported
+   a rare x86-compatible board called "Bifferboard", which required a massive
+   hack to have an IRQ-usable pin (hijacking a serial-related IRQ) and some
+   tricks for fast bit-banging SPI, so it was completely different from a
+   "normal" SPI-master driver. Hence the extra abstraction...
+*/
+
 #if !defined(__PLATFORM_H__)
 #define __PLATFORM_H__
 

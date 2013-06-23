@@ -23,6 +23,13 @@
 #include <linux/ioport.h>
 #include <asm/io.h>
 
+/*
+	This file handles pinmuxing on Beaglebone and Beaglebone Black.
+	
+	If you want to change the default hardware settings for BBB/BB, this
+	is the place to look.
+*/
+
 // the amount of RFM12 modules connected to the beaglebone
 // per default, we have settings for one board. if you want
 // more boards, you need to add the necessary settings below
