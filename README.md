@@ -64,7 +64,7 @@ I've included more detailed steps below for the actual Linux distributions I am 
 3.    Clone this repository and run `make`
 4.    Make sure that the RFM12B module is connect
 5.    Load the kernel driver for the SPI interface: `sudo modprobe spi-bcm2708`
-6.    Load the RFM12B module: `sudo insmod rfm12b`.
+6.    Load the RFM12B module: `sudo insmod rfm12b.ko`.
 7.    Check the output of `dmesg` and look into `/dev` to make sure that the driver has been loaded successfully.
 
 **Beaglebone (Black) — Ubuntu 13.04, 3.8+ kernel**
