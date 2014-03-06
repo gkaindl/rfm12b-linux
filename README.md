@@ -59,7 +59,7 @@ I've included more detailed steps below for the actual Linux distributions I am 
 
 **Raspberry Pi — Raspbian**
 
-1.    Install the kernel sources for your running kernel, either manually or by using a script such as this: [https://gist.github.com/azbesthu/3893319](https://gist.github.com/azbesthu/38933
+1.    Install the kernel sources for your running kernel, either manually or by using a script such as this: [https://gist.github.com/azbesthu/3893319](https://gist.github.com/azbesthu/3893319)
 2.    Open the `rfm12b_config.h` file, read it carefully and edit the settings to your liking. Be especially sure to correctly choose the board you are building for.
 3.    Clone this repository and run `make`
 4.    Make sure that the RFM12B module is connect
