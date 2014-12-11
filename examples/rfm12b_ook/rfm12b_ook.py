@@ -56,14 +56,18 @@ class switch(object):
     REPEAT_COUNT = 3
 
     code = {
-        ZERO: [0b10001000],
-        ONE: [0b11101110],
-        FLOAT: [0b10001110],
-        SYNC: [0b10000000, 0, 0, 0],
+        # ZERO: [0b10001000],
+        # ONE: [0b11101110],
+        # FLOAT: [0b10001110],
+        # SYNC: [0b10000000, 0, 0, 0],
         # ZERO: [0b11111111],
         # ONE: [0b11111111],
         # FLOAT: [0b11111111],
         # SYNC: [0b11111111, 0b11111111, 0b11111111, 0b11111111],
+        ZERO: [0b11111111],
+        ONE: [0b11111111],
+        FLOAT: [0b11111111],
+        SYNC: [0b11111111, 0b11111111, 0b11111111, 0b01111],
         }
 
     def __init__(self, system, unit, repeat=1):
@@ -91,7 +95,7 @@ class switch(object):
                 ook.cmds[k] = encd
                 k += 1
         ook.len = k
-        
+
         return fcntl.ioctl(self.rf12, ook.get_ioctl_request(), ook)
 
     def on(self):
