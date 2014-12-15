@@ -56,18 +56,10 @@ class switch(object):
     REPEAT_COUNT = 3
 
     code = {
-        # ZERO: [0b10001000],
-        # ONE: [0b11101110],
-        # FLOAT: [0b10001110],
-        # SYNC: [0b10000000, 0, 0, 0],
-        # ZERO: [0b11111111],
-        # ONE: [0b11111111],
-        # FLOAT: [0b11111111],
-        # SYNC: [0b11111111, 0b11111111, 0b11111111, 0b11111111],
-        ZERO: [0b11111111],
-        ONE: [0b11111111],
-        FLOAT: [0b11111111],
-        SYNC: [0b11111111, 0b11111111, 0b11111111, 0b01111],
+        ZERO: [0b10001000],
+        ONE: [0b11101110],
+        FLOAT: [0b10001110],
+        SYNC: [0b10000000, 0, 0, 0],
         }
 
     def __init__(self, system, unit, repeat=1):
@@ -88,7 +80,7 @@ class switch(object):
         print len(frame), repr(frame)
 
         ook = rfm12b_ook_cmds()
-        ook.delay_us = 245
+        ook.delay_us = 200
         k = 0
         for bit in frame:
             for encd in self.code[bit]:

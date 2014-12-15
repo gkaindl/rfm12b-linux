@@ -466,7 +466,7 @@ rfm12_setup(struct rfm12_data* rfm12)
 
 #else
 
-   tr = rfm12_make_spi_transfer(0x8027, tx_buf+0, NULL);
+   tr = rfm12_make_spi_transfer(0x8017, tx_buf+0, NULL);
    spi_message_add_tail(&tr, &msg);
 
    tr2 = rfm12_make_spi_transfer(0x8208, tx_buf+2, NULL);
@@ -1232,15 +1232,15 @@ size_t count, loff_t *f_pos)
 }
 
 
-struct spi_transfer ook_transfers[RFM12B_OOK_CMD_MAX_LEN * 8 * 2];
-struct spi_message ook_spi_msg;
-
 static void
 rfm12_ook_completion(void *context)
 {
   struct spi_message *spi_msg = context;
-  dev_info(spi_msg->spi->device, "ook: transfer completed. status = %d", spi_msg->status);
+  dev_info(spi_msg->spi, "ook: transfer completed. status = %d", spi_msg->status);
 }
+
+#define RFM12_LOW_POWER_MODE 0x9807
+#define RFM12_HIGH_POWER_MODE 0x9800
 
 static int
 rfm12_send_ook(struct rfm12_data* rfm12, rfm12_ook_cmds *ook)
@@ -1248,30 +1248,47 @@ rfm12_send_ook(struct rfm12_data* rfm12, rfm12_ook_cmds *ook)
   int err;
   int i, j, k;
   unsigned long flags;
+  static struct spi_transfer ook_transfers[RFM12B_OOK_CMD_MAX_LEN * 8  + 2];
+  static struct spi_message ook_spi_msg;
 
-  static u16 onoff[] = {htons(RF_IDLE_MODE), htons(RF_XMITTER_ON)};
+  static u16 reg_vals[] = {
+    htons(RFM12_LOW_POWER_MODE),
+    htons(RFM12_HIGH_POWER_MODE),
+    htons(RF_XMITTER_ON),
+    htons(RF_IDLE_MODE),};
 
   spi_message_init(&ook_spi_msg);
   ook_spi_msg.context = &ook_spi_msg,
   ook_spi_msg.complete = rfm12_ook_completion;
   
   k = 0;
-  for (i = 0; i < ook->len; i++) {
-    u8 byte = ook->cmds[i];
-    for (j = 0; j < 8; j++, byte <<= 1) {
-      memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
-      ook_transfers[k].tx_buf = &onoff[byte & 0x80 ? 1 : 0];
-      ook_transfers[k].len = sizeof(onoff[0]);
-      ook_transfers[k].cs_change = 1;
-      spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
-      k++;
+  memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+  ook_transfers[k].tx_buf = &reg_vals[2];
+  ook_transfers[k].len = sizeof(reg_vals[2]);
+  ook_transfers[k].cs_change = 1;
+  ook_transfers[k].delay_usecs = ook->delay_us;
+  spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
+  k++;
 
+  for (i = 0; i < ook->len; i++) {
+    u8 bits = ook->cmds[i];
+    for (j = 0; j < 8; j++, bits <<= 1) {
       memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+      ook_transfers[k].tx_buf = &reg_vals[bits & 0x80 ? 1 : 0];
+      ook_transfers[k].len = sizeof(reg_vals[0]);
       ook_transfers[k].delay_usecs = ook->delay_us;
+      ook_transfers[k].cs_change = 1;
       spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
       k++;
     }
   }
+  memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+  ook_transfers[k].tx_buf = &reg_vals[3];
+  ook_transfers[k].len = sizeof(reg_vals[3]);
+  ook_transfers[k].cs_change = 1;
+  ook_transfers[k].delay_usecs = ook->delay_us;
+  spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
+  k++;
 
   spin_lock_irqsave(&rfm12->lock, flags);
   err = spi_async(rfm12->spi, &ook_spi_msg);
