@@ -231,7 +231,7 @@ rfm12_make_spi_transfer(uint16_t cmd, u8* tx_buf, u8* rx_buf)
      .tx_buf           = tx_buf,
      .rx_buf           = rx_buf,
      .len              = 2,
-     .cs_change        = 0,
+     .cs_change        = 1,
      .bits_per_word    = 0,
      .delay_usecs      = 0,
      .speed_hz         = 0
@@ -276,11 +276,21 @@ static void
 rfm12_generic_spi_completion_handler(void *arg)
 {
    unsigned long flags;
+   struct rfm12_data* rfm12;
    struct rfm12_spi_message* spi_msg =
      (struct rfm12_spi_message*)arg;
-   struct rfm12_data* rfm12 =
-     (struct rfm12_data*)spi_msg->context;
-
+   if (spi_msg == NULL) {
+      printk(KERN_INFO RFM12B_DRV_NAME
+        ": spi completion spi_msg = %p", spi_msg);
+      return;
+   }
+    
+  rfm12 = (struct rfm12_data*)spi_msg->context;
+  if (rfm12 == NULL) {
+      printk(KERN_INFO RFM12B_DRV_NAME
+        ": spi completion rfm12 = %p", rfm12);
+      return;
+   }
    spin_lock_irqsave(&rfm12->lock, flags);
 
    __rfm12_generic_spi_completion_handler(arg);
@@ -316,7 +326,6 @@ rfm12_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
    i=1;
    if (num_cmds > 1) {
         for (i=1; i<num_cmds; i++) {
-           spi_msg->spi_transfers[i-1].cs_change = 1;
            spi_msg->spi_transfers[i-1].delay_usecs = delay_usecs;
            spi_message_add_tail(&spi_msg->spi_transfers[i-1], &spi_msg->spi_msg);
    
@@ -374,10 +383,10 @@ rfm12_start_receiving(struct rfm12_data* rfm12)
 static int
 rfm12_setup(struct rfm12_data* rfm12)
 {
-   struct spi_transfer tr, tr2, tr3, tr4, tr5, tr6, tr7, tr8, tr9,
-     tr10, tr11, tr12, tr13;
+   static struct spi_transfer tr, tr2, tr3, tr4, tr5, tr6, tr7, tr8, tr9,
+     tr10, tr11, tr12;
    struct spi_message msg;
-   u8 tx_buf[26];
+   static u8 tx_buf[26];
    int err;
 
    rfm12->state = RFM12_STATE_CONFIG;
@@ -385,11 +394,9 @@ rfm12_setup(struct rfm12_data* rfm12)
    spi_message_init(&msg);
 
    tr = rfm12_make_spi_transfer(RF_READ_STATUS, tx_buf+0, NULL);
-   tr.cs_change = 1;
    spi_message_add_tail(&tr, &msg);
 
    tr2 = rfm12_make_spi_transfer(RF_SLEEP_MODE, tx_buf+2, NULL);
-   tr2.cs_change = 1;
    spi_message_add_tail(&tr2, &msg);
 
    tr3 = rfm12_make_spi_transfer(RF_TXREG_WRITE, tx_buf+4, NULL);
@@ -405,69 +412,97 @@ rfm12_setup(struct rfm12_data* rfm12)
    // ok, we're now ready to be configured.
    spi_message_init(&msg);
 
+#if 0
+
    tr = rfm12_make_spi_transfer(0x80C7 |
          ((rfm12->band_id & 0xff) << 4), tx_buf+0, NULL);
-   tr.cs_change = 1;
    spi_message_add_tail(&tr, &msg);
 
    tr2 = rfm12_make_spi_transfer(0xA640, tx_buf+2, NULL);
-   tr2.cs_change = 1;
    spi_message_add_tail(&tr2, &msg);
 
    tr3 = rfm12_make_spi_transfer(0xC600 | rfm12->bit_rate, tx_buf+4, NULL);
-   tr3.cs_change = 1;
    spi_message_add_tail(&tr3, &msg);
 
    tr4 = rfm12_make_spi_transfer(0x94A2, tx_buf+6, NULL);
-   tr4.cs_change = 1;
    spi_message_add_tail(&tr4, &msg);
 
    tr5 = rfm12_make_spi_transfer(0xC2AC, tx_buf+8, NULL);
-   tr5.cs_change = 1;
    spi_message_add_tail(&tr5, &msg);
 
    if (0 != rfm12->group_id) {
      tr6 = rfm12_make_spi_transfer(0xCA83, tx_buf+10, NULL);
-     tr6.cs_change = 1;
      spi_message_add_tail(&tr6, &msg);
 
      tr7 = rfm12_make_spi_transfer(0xCE00 |
         rfm12->group_id, tx_buf+12, NULL);
-     tr7.cs_change = 1;
      spi_message_add_tail(&tr7, &msg);
    } else {
      tr6 = rfm12_make_spi_transfer(0xCA8B, tx_buf+10, NULL);
-     tr6.cs_change = 1;
      spi_message_add_tail(&tr6, &msg);
 
      tr7 = rfm12_make_spi_transfer(0xCE2D, tx_buf+12, NULL);
-     tr7.cs_change = 1;
      spi_message_add_tail(&tr7, &msg);
    }
 
    tr8 = rfm12_make_spi_transfer(0xC483, tx_buf+14, NULL);
-   tr8.cs_change = 1;
    spi_message_add_tail(&tr8, &msg);
 
    tr9 = rfm12_make_spi_transfer(0x9850, tx_buf+16, NULL);
-   tr9.cs_change = 1;
    spi_message_add_tail(&tr9, &msg);
 
    tr10 = rfm12_make_spi_transfer(0xCC77, tx_buf+18, NULL);
-   tr10.cs_change = 1;
    spi_message_add_tail(&tr10, &msg);
 
    tr11 = rfm12_make_spi_transfer(0xE000, tx_buf+20, NULL);
-   tr11.cs_change = 1;
    spi_message_add_tail(&tr11, &msg);
 
    tr12 = rfm12_make_spi_transfer(0xC800, tx_buf+22, NULL);
-   tr12.cs_change = 1;
    spi_message_add_tail(&tr12, &msg);
 
    // set low battery threshold to 2.9V
    tr13 = rfm12_make_spi_transfer(0xC047, tx_buf+24, NULL);
    spi_message_add_tail(&tr13, &msg);
+
+#else
+
+   tr = rfm12_make_spi_transfer(0x8017, tx_buf+0, NULL);
+   spi_message_add_tail(&tr, &msg);
+
+   tr2 = rfm12_make_spi_transfer(0x8208, tx_buf+2, NULL);
+   spi_message_add_tail(&tr2, &msg);
+
+   tr3 = rfm12_make_spi_transfer(0xA620 | rfm12->bit_rate, tx_buf+4, NULL);
+   spi_message_add_tail(&tr3, &msg);
+
+   tr4 = rfm12_make_spi_transfer(0xC647, tx_buf+6, NULL);
+   spi_message_add_tail(&tr4, &msg);
+
+   tr5 = rfm12_make_spi_transfer(0x9489, tx_buf+8, NULL);
+   spi_message_add_tail(&tr5, &msg);
+
+   tr6 = rfm12_make_spi_transfer(0xC220, tx_buf+10, NULL);
+   spi_message_add_tail(&tr6, &msg);
+
+   tr7 = rfm12_make_spi_transfer(0xCA00, tx_buf+12, NULL);
+   spi_message_add_tail(&tr7, &msg);
+
+   tr8 = rfm12_make_spi_transfer(0xC4C3, tx_buf+14, NULL);
+   spi_message_add_tail(&tr8, &msg);
+
+   tr9 = rfm12_make_spi_transfer(0xCC67, tx_buf+16, NULL);
+   spi_message_add_tail(&tr9, &msg);
+
+   tr10 = rfm12_make_spi_transfer(0xC000, tx_buf+18, NULL);
+   spi_message_add_tail(&tr10, &msg);
+
+   tr11 = rfm12_make_spi_transfer(0xE000, tx_buf+20, NULL);
+   spi_message_add_tail(&tr11, &msg);
+
+   tr12 = rfm12_make_spi_transfer(0xC800, tx_buf+22, NULL);
+   spi_message_add_tail(&tr12, &msg);
+
+#endif
 
    err = spi_sync(rfm12->spi, &msg);
 
@@ -1196,6 +1231,71 @@ size_t count, loff_t *f_pos)
    return copied;
 }
 
+
+static void
+rfm12_ook_completion(void *context)
+{
+  struct spi_message *spi_msg = context;
+  dev_info(spi_msg->spi, "ook: transfer completed. status = %d", spi_msg->status);
+}
+
+#define RFM12_LOW_POWER_MODE 0x9807
+#define RFM12_HIGH_POWER_MODE 0x9800
+
+static int
+rfm12_send_ook(struct rfm12_data* rfm12, rfm12_ook_cmds *ook)
+{
+  int err;
+  int i, j, k;
+  unsigned long flags;
+  static struct spi_transfer ook_transfers[RFM12B_OOK_CMD_MAX_LEN * 8  + 2];
+  static struct spi_message ook_spi_msg;
+
+  static u16 reg_vals[] = {
+    htons(RFM12_LOW_POWER_MODE),
+    htons(RFM12_HIGH_POWER_MODE),
+    htons(RF_XMITTER_ON),
+    htons(RF_IDLE_MODE),};
+
+  spi_message_init(&ook_spi_msg);
+  ook_spi_msg.context = &ook_spi_msg,
+  ook_spi_msg.complete = rfm12_ook_completion;
+  
+  k = 0;
+  memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+  ook_transfers[k].tx_buf = &reg_vals[2];
+  ook_transfers[k].len = sizeof(reg_vals[2]);
+  ook_transfers[k].cs_change = 1;
+  ook_transfers[k].delay_usecs = ook->delay_us;
+  spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
+  k++;
+
+  for (i = 0; i < ook->len; i++) {
+    u8 bits = ook->cmds[i];
+    for (j = 0; j < 8; j++, bits <<= 1) {
+      memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+      ook_transfers[k].tx_buf = &reg_vals[bits & 0x80 ? 1 : 0];
+      ook_transfers[k].len = sizeof(reg_vals[0]);
+      ook_transfers[k].delay_usecs = ook->delay_us;
+      ook_transfers[k].cs_change = 1;
+      spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
+      k++;
+    }
+  }
+  memset(&ook_transfers[k], 0, sizeof(ook_transfers[0]));
+  ook_transfers[k].tx_buf = &reg_vals[3];
+  ook_transfers[k].len = sizeof(reg_vals[3]);
+  ook_transfers[k].cs_change = 1;
+  ook_transfers[k].delay_usecs = ook->delay_us;
+  spi_message_add_tail(&ook_transfers[k], &ook_spi_msg);
+  k++;
+
+  spin_lock_irqsave(&rfm12->lock, flags);
+  err = spi_async(rfm12->spi, &ook_spi_msg);
+  spin_unlock_irqrestore(&rfm12->lock, flags);
+  return err;
+}
+
 static unsigned int
 rfm12_poll(struct file* filp, poll_table* wait)
 {
@@ -1343,7 +1443,17 @@ rfm12_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
          
          break;
       }
-      
+
+      case RFM12B_IOCTL_SEND_OOK: {
+        rfm12_ook_cmds ook_cmd;
+        if (0 != copy_from_user(&ook_cmd, (rfm12_ook_cmds*)arg, sizeof(rfm12_ook_cmds)))
+           return -EACCES;
+        
+        rfm12_send_ook(rfm12, &ook_cmd);
+
+        break;
+      }
+
       default:
             return -EINVAL;
    }

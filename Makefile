@@ -20,10 +20,12 @@
 obj-m += rfm12b.o
 
 KVERSION := $(shell uname -r)
+UAPI = /lib/modules/$(KVERSION)/build/include/generated/uapi
 
 # 3.7 moved version.h to a different location
-#if [ -f /lib/modules/$(KVERSION)/build/include/generated/uapi/linux/version.h ]; then \
-#INCLUDE += -I/lib/modules/$(KVERSION)/build/include/generated/uapi/
+ifeq ($wildcard $(UAPI)/linux/version.h),)
+INCLUDE += -I/lib/modules/$(KVERSION)/build/include/generated/uapi/
+endif
 
 all:
 	make -C /lib/modules/$(KVERSION)/build $(INCLUDE) M=$(PWD) modules
