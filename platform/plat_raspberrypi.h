@@ -37,9 +37,13 @@
 // as well.
 #define NUM_RFM12_BOARDS         1
 
+
+
 #ifdef PI2
+//BCM2708_PERI_BASE = 0x3f000000
 #define GPIO_BASE 0x3f200000
 #else
+//BCM2708_PERI_BASE = 0x20000000
 #define GPIO_BASE 0x20200000
 #endif
 

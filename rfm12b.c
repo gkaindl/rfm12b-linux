@@ -1236,7 +1236,7 @@ static void
 rfm12_ook_completion(void *context)
 {
   struct spi_message *spi_msg = context;
-  dev_info(spi_msg->spi, "ook: transfer completed. status = %d", spi_msg->status);
+  dev_info(&spi_msg->spi->dev, "ook: transfer completed. status = %d", spi_msg->status);
 }
 
 #define RFM12_LOW_POWER_MODE 0x9807
