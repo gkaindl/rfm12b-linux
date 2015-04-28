@@ -39,6 +39,8 @@
 #include "rfm12b_ioctl.h"
 #include "rfm12b_jeenode.h"
 
+#define RFM69     1
+
 static u8 group_id      = RFM12B_DEFAULT_GROUP_ID;
 static u8 band_id         = RFM12B_DEFAULT_BAND_ID;
 static u8 bit_rate      = RFM12B_DEFAULT_BIT_RATE;
@@ -76,9 +78,9 @@ MODULE_PARM_DESC(jee_autoack,
 
 #define RF_STATUS_BIT_LBAT          (0x0400)
 #define RF_STATUS_BIT_FFEM          (0x0200)
-#define RF_STATUS_BIT_FFOV_RGUR      (0x2000)
+#define RF_STATUS_BIT_FFOV_RGUR     (0x2000)
 #define RF_STATUS_BIT_RSSI          (0x0100)
-#define RF_STATUS_BIT_FFIT_RGIT      (0x8000)
+#define RF_STATUS_BIT_FFIT_RGIT     (0x8000)
 
 #define RF_MAX_DATA_LEN    66
 #define RF_EXTRA_LEN       4 // 4 : 1 byte hdr, 1 byte len, 2 bytes crc16 (see JeeLib)
@@ -142,25 +144,25 @@ struct rfm12_data {
 
    u8                   open, should_release, trysend;
    rfm12_state_t        state;
-   u8                      group_id, band_id, bit_rate, jee_id, jee_autoack;
+   u8                   group_id, band_id, bit_rate, jee_id, jee_autoack;
    unsigned long        bytes_recvd, pkts_recvd;
    unsigned long        bytes_sent, pkts_sent;
    unsigned long        num_recv_overflows, num_recv_timeouts, num_recv_crc16_fail;
-   unsigned long          num_send_underruns, num_send_timeouts;
+   unsigned long        num_send_underruns, num_send_timeouts;
    u8*                  in_buf, *in_buf_pos;
    u8*                  out_buf, *out_buf_pos;
    u8*                  in_cur_len_pos;
    u8*                  in_cur_end, *out_cur_end;
-   u16                   crc16, last_status;
+   u16                  crc16, last_status;
    int                  in_cur_num_bytes, out_cur_num_bytes;
    struct rfm12_spi_message spi_msgs[NUM_MAX_CONCURRENT_MSG];
-   u8                     free_spi_msgs;
+   u8                   free_spi_msgs;
    struct timer_list    rxtx_watchdog;
    u8                   rxtx_watchdog_running;
-   struct timer_list       retry_sending_timer;
-   u8                      retry_sending_running;
-   wait_queue_head_t       wait_read;
-   wait_queue_head_t       wait_write;
+   struct timer_list    retry_sending_timer;
+   u8                   retry_sending_running;
+   wait_queue_head_t    wait_read;
+   wait_queue_head_t    wait_write;
 };
 
 // forward declarations
@@ -374,6 +376,130 @@ rfm12_start_receiving(struct rfm12_data* rfm12)
 static int
 rfm12_setup(struct rfm12_data* rfm12)
 {
+#if RFM69
+	// based on https://github.com/jcw/jeelib/blob/master/RF69.cpp
+	int err;
+	u32 rf69_freq;
+	u8* cmd_ptr, *sync_ptr;
+	u8 tx_buf[4];
+	u8 rx_buf[2];
+	u8 init_synchro[] = { 0xAA, 0x55, 0};
+   u8 config_init[] = {
+		0x01, 0x04, // OpMode = standby
+		0x02, 0x00, // DataModul = packet mode, fsk
+		0x03, 0x02, // BitRateMsb, data rate = 49,261 khz
+		0x04, 0x8A, // BitRateLsb, divider = 32 MHz / 650
+		0x05, 0x05, // FdevMsb = 90 KHz
+		0x06, 0xC3, // FdevLsb = 90 KHz
+		0x0B, 0x20, // AfcCtrl, afclowbetaon
+		0x19, 0x42, // RxBw ...
+		0x1E, 0x2C, // FeiStart, AfcAutoclearOn, AfcAutoOn
+		0x25, 0x80, // DioMapping1 = SyncAddress (Rx)
+		0x2E, 0x88, // SyncConfig = sync on, sync size = 2
+		0x2F, 0x2D, // SyncValue1 = 0x2D
+		0x37, 0x00, // PacketConfig1 = fixed, no crc, filt off
+		0x38, 0x00, // PayloadLength = 0, unlimited
+		0x3C, 0x8F, // FifoTresh, not empty, level 15
+		0x3D, 0x10, // PacketConfig2, interpkt = 1, autorxrestart off
+		0x6F, 0x20, // TestDagc ...
+		0x30, 0x00, // synchro2,
+		0x07, 0x00, // freq1
+		0x08, 0x00, // freq2
+		0x09, 0x00, // freq3
+		0
+   };
+   
+	err = 0;
+	sync_ptr = init_synchro;
+	
+	while (0 == err && 0 != *sync_ptr) {
+		int num_tries = 1000;
+		
+		while (0 == err && --num_tries > 0) {
+			struct spi_message msg;
+			struct spi_transfer tr, tr2;
+		
+			tr = rfm12_make_spi_transfer(
+					0x2F00 | 0x8000 | *sync_ptr,
+					tx_buf,
+					NULL
+			);
+					
+			tr2 = rfm12_make_spi_transfer(
+					0x2F00,
+					tx_buf+2,
+					rx_buf
+			);
+					
+			spi_message_add_tail(&tr, &msg);
+			spi_message_add_tail(&tr2, &msg);
+			
+			err = spi_sync(rfm12->spi, &msg);
+			
+			if (0 != err || rx_buf[1] == *sync_ptr) {
+				break;
+			}
+		}
+		
+		if (0 != err) {
+			goto pError;
+		}
+		
+		if (0 >= num_tries) {
+	      printk(KERN_ERR RFM12B_DRV_NAME
+	        ": rfm69 initial synchro failed!\n");
+			
+			goto pError;
+		}
+		
+		sync_ptr++;
+	}
+	
+	if (0 == rfm12->group_id) {
+		printk(KERN_WARNING RFM12B_DRV_NAME
+			": group id 0 doesn't work well for RFM69!\n");
+	}
+	
+	cmd_ptr = config_init;
+	
+	cmd_ptr[35] = rfm12->group_id;
+	
+	switch (rfm12->band_id) {
+		case 1: rf69_freq = 43; break;
+		case 3: rf69_freq = 90; break;
+		default: rf69_freq = 86; break;
+	}
+	
+	rf69_freq = rf69_freq * 10000000L + rfm12->band_id * 2500L;
+	rf69_freq = ((rf69_freq << 2) / (32000000L >> 11)) << 6;
+	
+	cmd_ptr[37] = (rf69_freq >> 16) & 0xff;
+	cmd_ptr[39] = (rf69_freq >> 7)  & 0xff;
+	cmd_ptr[41] = (rf69_freq)       & 0xff;
+	
+	// TODO: bit rate!
+	
+	while (0 == err && 0 != *cmd_ptr) {
+		struct spi_message msg;
+		struct spi_transfer tr =
+			rfm12_make_spi_transfer(
+				((u16)(cmd_ptr[0] | 0x80) << 16) | cmd_ptr[1],
+				tx_buf,
+				NULL
+			);
+				
+		spi_message_add_tail(&tr, &msg);
+		
+		err = spi_sync(rfm12->spi, &msg);
+		
+		cmd_ptr += 2;
+	}
+	
+	if (0 != err) {
+		goto pError;
+	}
+	
+#else
    struct spi_transfer tr, tr2, tr3, tr4, tr5, tr6, tr7, tr8, tr9,
      tr10, tr11, tr12, tr13;
    struct spi_message msg;
@@ -479,6 +605,7 @@ rfm12_setup(struct rfm12_data* rfm12)
 
      err = spi_sync(rfm12->spi, &msg);
    }
+#endif // RFM69
 
    printk(KERN_INFO RFM12B_DRV_NAME
        ": transceiver <0x%x> settings now: group %d, band %d, bit rate 0x%.2x (%d bps), "
