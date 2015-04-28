@@ -37,6 +37,16 @@
 // as well.
 #define NUM_RFM12_BOARDS         1
 
+
+
+#ifdef PI2
+//BCM2708_PERI_BASE = 0x3f000000
+#define GPIO_BASE 0x3f200000
+#else
+//BCM2708_PERI_BASE = 0x20000000
+#define GPIO_BASE 0x20200000
+#endif
+
 /*
 *  default config for raspberry pi (one RFM12 module)
 *
@@ -73,12 +83,12 @@ static int
 spi_rfm12_init_pinmux_settings(void)
 {
 // taken from https://github.com/bootc/linux/blob/rpi-i2cspi/drivers/spi/spi-bcm2708.c
-   
+
 #define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
 #define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
 
    int pin;
-   u32* gpio = ioremap(0x20200000, SZ_16K);
+   u32* gpio = ioremap(GPIO_BASE, SZ_16K);
    
    // SPI0 is on gpio 7..11
    for (pin = 7; pin <= 11; pin++) {

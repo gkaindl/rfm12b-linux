@@ -115,6 +115,9 @@
 */
 #define RFM12B_IOCTL_SET_JEEMODE_AUTOACK  _IOW(RFM12B_SPI_MAJOR, 10, int)
 
+#define RFM12B_IOCTL_SEND_OOK _IOW(RFM12B_SPI_MAJOR, 11, rfm12_ook_cmds*)
+
+
 /*
    Structure for driver statistics (see RFM12B_IOCTL_GET_STATS).
    
@@ -135,5 +138,14 @@ typedef struct
       num_send_timeouts,   // timeout count during sending
       low_battery;         // yes/no if rfm12b Vcc is currently below threshold
 } rfm12b_stats;
+
+#define RFM12B_OOK_CMD_MAX_LEN 200
+
+typedef struct
+{
+  int len;
+  unsigned int delay_us;
+  unsigned char cmds[RFM12B_OOK_CMD_MAX_LEN];
+} rfm12_ook_cmds;
 
 #endif // __RFM12B_IOCTL_H__
