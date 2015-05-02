@@ -384,11 +384,12 @@ rfm12_setup(struct rfm12_data* rfm12)
 	u8 tx_buf[4];
 	u8 rx_buf[2];
 	u8 init_synchro[] = { 0xAA, 0x55, 0};
+	u32 bitrate_actual = 0;
    u8 config_init[] = {
 		0x01, 0x04, // OpMode = standby
 		0x02, 0x00, // DataModul = packet mode, fsk
-		0x03, 0x02, // BitRateMsb, data rate = 49,261 khz
-		0x04, 0x8A, // BitRateLsb, divider = 32 MHz / 650
+		0x03, 0x00, // BitRateMsb, data rate = 49,261 khz
+		0x04, 0x00, // BitRateLsb, divider = 32 MHz / 650
 		0x05, 0x05, // FdevMsb = 90 KHz
 		0x06, 0xC3, // FdevLsb = 90 KHz
 		0x0B, 0x20, // AfcCtrl, afclowbetaon
@@ -461,6 +462,12 @@ rfm12_setup(struct rfm12_data* rfm12)
 	}
 	
 	cmd_ptr = config_init;
+	
+	bitrate_actual = RFM12B_BIT_RATE_FROM_BYTE(rfm12->bit_rate);
+	bitrate_actual = (32000000UL + bitrate_actual / 2) / bitrate_actual;
+	
+	cmd_ptr[5] = (bitrate_actual >> 8) & 0xff;
+	cmd_ptr[7] = bitrate_actual & 0xff;
 	
 	cmd_ptr[35] = rfm12->group_id;
 	
