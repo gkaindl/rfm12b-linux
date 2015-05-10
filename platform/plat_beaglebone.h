@@ -80,7 +80,7 @@ static struct am33xx_pinmux_settings pinmux_settings[] = {
       // beaglebone pin p9/27 (mcasp0_fsr)
       // set as GPIO3_19 (mode 7), PULLUP ENABLED, INPUT ENABLED
       .pin_addr = AM33XX_CONTROL_BASE + 0x9a4,
-      .settings = 0x7 | (2 << 3) | (1 << 5)
+      .settings = 0x7 | (1 << 3) | (1<< 5) // TODO!!! PULLUP ENABLED, FUCK!!!
    },
    {
       // beaglebone pin p9/42 (ecap0_in_pwm0_out)

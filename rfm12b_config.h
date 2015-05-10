@@ -35,7 +35,7 @@
   Beaglebone        2               platform/plat_beaglebone.h
   Beaglebone Black  3               platform/plat_beaglebone.h
 */
-#define RFM12B_BOARD        0
+#define RFM12B_BOARD        3
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
@@ -124,7 +124,7 @@
   the highest freq. for receiving, so experiment at your own risk!
 */
 
-#define RFM12B_SPI_MAX_HZ    2500000
+#define RFM12B_SPI_MAX_HZ    250000
 #define RFM12B_SPI_MODE      0
 #define RFM12B_SPI_BITS      8
 

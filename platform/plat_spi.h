@@ -88,7 +88,7 @@ platform_irq_handled(void* identifier)
    struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
       
    if (0 == brd->state.irq_enabled) {
-      if (0 == gpio_get_value(cfg->irq_pin))
+      if (0 && 1 == gpio_get_value(cfg->irq_pin)) // TODO: needs falling!!
          rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
       else {
          brd->state.irq_enabled = 1;
@@ -216,7 +216,7 @@ platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
 }
 
 static int
-platform_irq_init(void* identifier, void* rfm12_data)
+platform_irq_init(void* identifier, u32 irq_trigger, void* rfm12_data)
 {
    int err;
    struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
@@ -228,7 +228,7 @@ platform_irq_init(void* identifier, void* rfm12_data)
    err = request_any_context_irq(
       brd->irq,
       spi_rfm12_irq_handler,
-      IRQF_TRIGGER_FALLING | IRQF_DISABLED,
+      irq_trigger | IRQF_DISABLED,
       RFM12B_DRV_NAME,
       (void*)brd
    );
