@@ -1,1 +1,9 @@
-test/rf12_read/rf12_read
+*.cmd
+.tmp_versions/
+*.symvers
+examples/bin
+modules.order
+*.ko
+*.o
+*.mod.c
+
