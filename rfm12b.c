@@ -83,18 +83,27 @@ MODULE_PARM_DESC(jee_autoack,
 #define RF_STATUS_BIT_FFIT_RGIT     (0x8000)
 
 #define RFM69_MASK_REGWRITE         (0x80)
+   
 #define RFM69_REG_IRQFLAGS2         (0x28)
 #define RFM69_REG_FIFO              (0x00)
 #define RFM69_REG_OPMODE            (0x01)
+#define RFM69_REG_RSSIVALUE         (0x24)
+#define RFM69_REG_DIOMAPPING1       (0x25)
    
 #define RFM69_MODE_STANDBY          (0x04)
 #define RFM69_MODE_RECEIVER         (0x10)
-#define RFM69_MODE_TRANSMITTER      (0x0C)
+#define RFM69_MODE_XMITTER          (0x0C)
+   
+#define RFM69_DIOMAPPING1_DIO0_00   (0x00)
+#define RFM69_DIOMAPPING1_DIO0_10   (0x80)
    
 #define RFM69_IRQ2_FIFOFULL         (0x80)
 #define RFM69_IRQ2_FIFONOTEMPTY     (0x40)
 #define RFM69_IRQ2_FIFOOVERRUN      (0x10)
-      
+
+#define RFM69_RSSIVAL_TO_DBM(val)   (-(((int)(val))>>1))
+#define RFM69_RSSIVAL_SEND_MIN      (-90)
+
 #define RF_MAX_DATA_LEN    66
 #define RF_EXTRA_LEN       4 // 4 : 1 byte hdr, 1 byte len, 2 bytes crc16 (see JeeLib)
 #define RF_MAX_LEN         (RF_MAX_DATA_LEN+RF_EXTRA_LEN)
@@ -134,7 +143,8 @@ typedef enum _rfm12_state_t {
    RFM12_STATE_SEND            = 12,
    RFM12_STATE_SEND_TAIL1      = 13,
    RFM12_STATE_SEND_TAIL2      = 14,
-   RFM12_STATE_SEND_TAIL3      = 15
+   RFM12_STATE_SEND_TAIL3      = 15,
+   RFM12_STATE_SEND_FINISHED  = 16
 } rfm12_state_t;
 
 typedef enum _rfm12_module_type_t {
@@ -183,8 +193,10 @@ struct rfm12_data {
    u8                   retry_sending_running;
    wait_queue_head_t    wait_read;
    wait_queue_head_t    wait_write;
+   
    u8                   rf69_req_mode;
    void (*rf69_mode_callback)(void*); 
+   void (*rf69_flush_fifo_callback)(struct rfm12_data*);
 };
 
 // forward declarations
@@ -213,6 +225,16 @@ rfm_crc16_update(u16 crc, u8 b);
 static void
 rfm_finish_send_or_recv_callback(void *arg);
 static void
+rfm_finish_trysend(struct rfm12_data* rfm12);
+static void
+rfm_start_trysend_retry_timer(struct rfm12_data* rfm12);
+static void
+rfm_trysend_retry_timer_expired(unsigned long ptr);
+static int
+rfm_finish_sending(struct rfm12_data* rfm12, int success);
+static void
+rfm_stop_listening_and_send_callback(void *arg);
+static void
 rfm_release_when_safe(struct rfm12_data* rfm12);
 static void
 rfm_disable_hardware_on_release_handler(void *arg);
@@ -227,6 +249,8 @@ static int
 rfmXX_start_receiving(struct rfm12_data* rfm12);
 static int
 rfmXX_finish_send_recv_common(struct rfm12_data* rfm12);
+static int
+rfmXX_stop_listening_and_send(struct rfm12_data* rfm12);
 
 static void
 rfm12_handle_interrupt(struct rfm12_data* rfm12);
@@ -242,11 +266,11 @@ rfm12_request_fifo_byte(struct rfm12_data* rfm12);
 static int
 rfm12_finish_send_recv_common(struct rfm12_data* rfm12);
 static int
-rfm12_finish_sending(struct rfm12_data* rfm12, int success);
-static int
 rfm12_try_sending(struct rfm12_data* rfm12);
 static void
 rfm12_trysend_completion_handler(void *arg);
+static int
+rfm12_stop_listening_and_send(struct rfm12_data* rfm12);
 
 static int
 rfm69_flush_fifo_blocking(struct rfm12_data* rfm12);
@@ -260,14 +284,31 @@ static int
 rfm69_disable_hardware_on_release(struct rfm12_data* rfm12);
 static int
 rfm69_start_receiving(struct rfm12_data* rfm12);
+static void
+rfm69_start_receiving_with_empty_fifo(struct rfm12_data* rfm12);
 static int
-rfm69_flush_fifo_and_start_receiving(struct rfm12_data* rfm12);
+rfm69_flush_fifo_with_finish_handler(struct rfm12_data* rfm12,
+   void (*a_handler)(struct rfm12_data*));
 static void
-rfm69_flush_fifo_and_start_receiving_completion_handler(void* arg);
+rfm69_flush_fifo_async_completion_handler(void* arg);
 static void
-rfm69_flush_fifo_and_start_receiving_loop_handler(void* arg);
+rfm69_flush_fifo_async_loop_handler(void* arg);
 static int
 rfm69_try_sending(struct rfm12_data* rfm12);
+static void
+rfm69_trysend_completion_handler(void *arg);
+static int
+rfm69_stop_listening_and_send(struct rfm12_data* rfm12);
+static void
+rfm69_start_sending_with_empty_fifo(struct rfm12_data* rfm12);
+static void
+rfm69_start_sending_with_empty_fifo_handler(void* arg);
+static void
+rfm69_set_mode_transmitter_callback(void* arg);
+static int
+rfm69_send_fifo_loop(struct rfm12_data* rfm12);
+static void
+rfm69_send_fifo_loop_callback(void* arg);
 static int
 rfm69_poll_receive_fifo(struct rfm12_data* rfm12);
 static void
@@ -412,7 +453,7 @@ rfm12_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
    i=1;
    if (num_cmds > 1) {
         for (i=1; i<num_cmds; i++) {
-           spi_msg->spi_transfers[i-1].cs_change = (i+1 != num_cmds) ? 1 : 0;
+           spi_msg->spi_transfers[i-1].cs_change = 1;
            spi_msg->spi_transfers[i-1].delay_usecs = delay_usecs;
            spi_message_add_tail(&spi_msg->spi_transfers[i-1], &spi_msg->spi_msg);
    
@@ -637,6 +678,15 @@ rfm_finish_receiving(struct rfm12_data* rfm12, int skip_packet)
 }
 
 static void
+rfm_begin_sending_or_receiving(struct rfm12_data* rfm12)
+{      
+   if (RFM12_STATE_IDLE == rfm12->state) {      
+      if (!rfmXX_try_sending(rfm12))
+         rfmXX_start_receiving(rfm12);
+   }
+}
+
+static void
 rfm_rxtx_watchdog_expired(unsigned long ptr)
 {
    unsigned long flags;
@@ -651,7 +701,7 @@ rfm_rxtx_watchdog_expired(unsigned long ptr)
    } else if (RFM12_STATE_SEND_PRE1 <= rfm12->state &&
         RFM12_STATE_SEND_TAIL3 >= rfm12->state) {
      rfm12->num_send_timeouts++;
-     (void)rfm12_finish_sending(rfm12, 0);        
+     (void)rfm_finish_sending(rfm12, 0);        
    }
 
    rfm12->rxtx_watchdog_running = 0;
@@ -738,6 +788,89 @@ rfm_finish_send_or_recv_callback(void *arg)
    if (!should_release) {
       platform_irq_handled(rfm12->irq_identifier);
    }
+}
+
+static void
+rfm_finish_trysend(struct rfm12_data* rfm12)
+{
+   rfm12->retry_sending_running = 0;
+   rfm12->trysend = 0;
+}
+
+static void
+rfm_start_trysend_retry_timer(struct rfm12_data* rfm12)
+{
+   init_timer(&rfm12->retry_sending_timer);
+   rfm12->retry_sending_timer.expires = jiffies + TRYSEND_RETRY_JIFFIES;
+   rfm12->retry_sending_timer.data = (unsigned long)rfm12;
+   rfm12->retry_sending_timer.function = rfm_trysend_retry_timer_expired;
+   add_timer(&rfm12->retry_sending_timer);
+   rfm12->retry_sending_running = 1;
+}
+
+static void
+rfm_trysend_retry_timer_expired(unsigned long ptr)
+{
+   unsigned long flags;
+   struct rfm12_data* rfm12 = (struct rfm12_data*)ptr;
+
+   spin_lock_irqsave(&rfm12->lock, flags);
+
+   if (rfm12->retry_sending_running) {
+      rfm_finish_trysend(rfm12);
+      rfmXX_try_sending(rfm12);
+   } else {
+      rfm_finish_trysend(rfm12);
+   }
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
+}
+
+static int
+rfm_finish_sending(struct rfm12_data* rfm12, int success)
+{
+   int err = 0, len = 0;
+   
+   rfm_update_rxtx_watchdog(rfm12, 1);
+         
+   if (success) {
+      len = rfm12->out_buf[1] + RF_EXTRA_LEN;
+      
+      memmove(rfm12->out_buf,
+               rfm12->out_buf + len,
+               DATA_BUF_SIZE - len
+      );
+      
+      rfm12->out_cur_end -= len;
+      rfm12->out_buf_pos = rfm12->out_buf;
+      
+      rfm12->pkts_sent++;
+      rfm12->bytes_sent += len - RF_EXTRA_LEN;
+      
+      wake_up_interruptible(&rfm12->wait_write);
+   }
+   
+   err = rfmXX_finish_send_recv_common(rfm12);
+   
+   return err;
+}
+
+static void
+rfm_stop_listening_and_send_callback(void *arg)
+{
+   unsigned long flags;
+   struct rfm12_spi_message* spi_msg =
+     (struct rfm12_spi_message*)arg; 
+   struct rfm12_data* rfm12 =
+     (struct rfm12_data*)spi_msg->context;
+
+   spin_lock_irqsave(&rfm12->lock, flags);
+
+   rfm12_spi_completion_common(spi_msg);
+   
+   rfm_begin_sending_or_receiving(rfm12);
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
 }
 
 static void
@@ -862,6 +995,25 @@ rfmXX_finish_send_recv_common(struct rfm12_data* rfm12)
          break;
       case RFM12_TYPE_RF69:
          err = rfm69_finish_send_recv_common(rfm12);
+         break;
+      default:
+         break;
+   }
+   
+   return err;
+}
+
+static int
+rfmXX_stop_listening_and_send(struct rfm12_data* rfm12)
+{
+   int err = 0;
+   
+   switch (rfm12->module_type) {
+      case RFM12_TYPE_RF12:
+         err = rfm12_stop_listening_and_send(rfm12);
+         break;
+      case RFM12_TYPE_RF69:
+         err = rfm69_stop_listening_and_send(rfm12);
          break;
       default:
          break;
@@ -1072,35 +1224,6 @@ rfm12_finish_send_recv_common(struct rfm12_data* rfm12)
       0, rfm_finish_send_or_recv_callback, RFM12_STATE_NO_CHANGE);
 }
 
-static int
-rfm12_finish_sending(struct rfm12_data* rfm12, int success)
-{
-   int err = 0, len = 0;
-   
-   rfm_update_rxtx_watchdog(rfm12, 1);
-         
-   if (success) {
-      len = rfm12->out_buf[1] + RF_EXTRA_LEN;
-      
-      memmove(rfm12->out_buf,
-               rfm12->out_buf + len,
-               DATA_BUF_SIZE - len
-      );
-      
-      rfm12->out_cur_end -= len;
-      rfm12->out_buf_pos = rfm12->out_buf;
-      
-      rfm12->pkts_sent++;
-      rfm12->bytes_sent += len - RF_EXTRA_LEN;
-      
-      wake_up_interruptible(&rfm12->wait_write);
-   }
-   
-   err = rfmXX_finish_send_recv_common(rfm12);
-   
-   return err;
-}
-
 static void
 rfm12_recv_spi_completion_handler(void *arg)
 {
@@ -1171,7 +1294,7 @@ rfm12_send_spi_completion_handler(void *arg)
       if (RFM12B_RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR)) {
          packet_finished = 1;
          rfm12->num_send_underruns++;
-         (void)rfm12_finish_sending(rfm12, 0);
+         (void)rfm_finish_sending(rfm12, 0);
       } else {
          if (!RFM12B_RETRY_SEND_ON_RGUR && (status & RF_STATUS_BIT_FFOV_RGUR))
                rfm12->num_send_underruns++;
@@ -1198,12 +1321,12 @@ rfm12_send_spi_completion_handler(void *arg)
                break;
             case RFM12_STATE_SEND_TAIL3:
                  packet_finished = 1;
-                 (void)rfm12_finish_sending(rfm12, 1);
+                 (void)rfm_finish_sending(rfm12, 1);
                  break;
             default:
                // should never happen
                packet_finished = 1;
-               (void)rfm12_finish_sending(rfm12, 0);
+               (void)rfm_finish_sending(rfm12, 0);
                break;
          }
          
@@ -1245,22 +1368,6 @@ rfm12_write_tx_byte(struct rfm12_data* rfm12, u8 tx_byte)
 }
 
 static void
-rfm12_trysend_retry_timer_expired(unsigned long ptr)
-{
-   unsigned long flags;
-   struct rfm12_data* rfm12 = (struct rfm12_data*)ptr;
-
-   spin_lock_irqsave(&rfm12->lock, flags);
-
-   if (rfm12->retry_sending_running)
-        rfmXX_try_sending(rfm12);
-
-   rfm12->retry_sending_running = 0;
-   
-   spin_unlock_irqrestore(&rfm12->lock, flags);
-}
-
-static void
 rfm12_trysend_completion_handler(void *arg)
 {
    unsigned long flags;
@@ -1272,7 +1379,7 @@ rfm12_trysend_completion_handler(void *arg)
 
    spin_lock_irqsave(&rfm12->lock, flags);
 
-   rfm12->retry_sending_running = 0;
+   rfm_finish_trysend(rfm12);
 
    rfm12_spi_completion_common(spi_msg);
 
@@ -1297,41 +1404,8 @@ rfm12_trysend_completion_handler(void *arg)
             0, NULL, RFM12_STATE_NO_CHANGE);
    } else if (RFM12_STATE_SEND_PRE1 > rfm12->state) {
       // try again a bit later...
-      init_timer(&rfm12->retry_sending_timer);
-      rfm12->retry_sending_timer.expires = jiffies + TRYSEND_RETRY_JIFFIES;
-      rfm12->retry_sending_timer.data = (unsigned long)rfm12;
-      rfm12->retry_sending_timer.function = rfm12_trysend_retry_timer_expired;
-      add_timer(&rfm12->retry_sending_timer);
-      rfm12->retry_sending_running = 1;
+      rfm_start_trysend_retry_timer(rfm12);
    }
-   
-   rfm12->trysend = 0;
-   spin_unlock_irqrestore(&rfm12->lock, flags);
-}
-
-static void
-rfm_begin_sending_or_receiving(struct rfm12_data* rfm12)
-{      
-   if (RFM12_STATE_IDLE == rfm12->state) {      
-      if (!rfmXX_try_sending(rfm12))
-         rfmXX_start_receiving(rfm12);
-   }
-}
-
-static void
-rfm12_stop_listening_and_send_callback(void *arg)
-{
-   unsigned long flags;
-   struct rfm12_spi_message* spi_msg =
-     (struct rfm12_spi_message*)arg; 
-   struct rfm12_data* rfm12 =
-     (struct rfm12_data*)spi_msg->context;
-
-   spin_lock_irqsave(&rfm12->lock, flags);
-
-   rfm12_spi_completion_common(spi_msg);
-   
-   rfm_begin_sending_or_receiving(rfm12);
    
    spin_unlock_irqrestore(&rfm12->lock, flags);
 }
@@ -1349,7 +1423,7 @@ rfm12_stop_listening_and_send(struct rfm12_data* rfm12)
       rfm12->state = RFM12_STATE_IDLE;
       
       err = rfm12_send_generic_async_cmd(rfm12, cmd, 2,
-         0, rfm12_stop_listening_and_send_callback, RFM12_STATE_NO_CHANGE);
+         0, rfm_stop_listening_and_send_callback, RFM12_STATE_NO_CHANGE);
    }
    
    return err;
@@ -1361,7 +1435,7 @@ rfm12_handle_interrupt(struct rfm12_data* rfm12)
 {   
    spin_lock(&rfm12->lock);
    
-   if (RFM12_TYPE_RF69 == rfm12->module_type) {          
+   if (RFM12_TYPE_RF69 == rfm12->module_type) {      
       switch (rfm12->state) {
          case RFM12_STATE_LISTEN:
          case RFM12_STATE_RECV:
@@ -1369,6 +1443,26 @@ rfm12_handle_interrupt(struct rfm12_data* rfm12)
             rfm_update_rxtx_watchdog(rfm12, 0);
             (void)rfm69_poll_receive_fifo(rfm12);
             break;
+         
+         case RFM12_STATE_SEND_PRE1:
+         case RFM12_STATE_SEND_PRE2:
+         case RFM12_STATE_SEND_PRE3:
+         case RFM12_STATE_SEND_SYN1:
+         case RFM12_STATE_SEND_SYN2:
+         case RFM12_STATE_SEND:
+         case RFM12_STATE_SEND_TAIL1:
+         case RFM12_STATE_SEND_TAIL2:
+         case RFM12_STATE_SEND_TAIL3: {
+            rfm12->num_send_underruns++;
+            rfm_finish_sending(rfm12, 0);
+            break;
+         }
+         
+         case RFM12_STATE_SEND_FINISHED: {
+            rfm_finish_sending(rfm12, 1);
+            break;
+         }
+         
          default:
             // bogus/uninteresting interrupt
             platform_irq_handled(rfm12->irq_identifier);
@@ -1470,9 +1564,7 @@ rfm69_set_mode(struct rfm12_data* rfm12, u8 mode,
    
    rfm12->rf69_req_mode = mode;
    rfm12->rf69_mode_callback = spi_callback;
-   
-   printk("SETMODE: %x\n", mode);
-   
+      
    return err;
 }
 
@@ -1495,9 +1587,6 @@ rfm69_set_mode_handler(void* arg)
    
    (void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1, 0,
      rfm12->rf69_mode_callback, RFM12_STATE_NO_CHANGE);
-     
-    printk("SETMODE DOME: %x (was: %x)\n", (spi_msg->spi_rx[1] & 0xE3) |
-          rfm12->rf69_req_mode, spi_msg->spi_rx[1]);
    
    spin_unlock_irqrestore(&rfm12->lock, flags);
 }
@@ -1576,19 +1665,9 @@ rfm69_setup(struct rfm12_data* rfm12)
 				tx_buf,
 				NULL
 			);
-		
-      tr.cs_change = 1;
-      
-		struct spi_transfer tr2 =
-			rfm12_make_spi_transfer(
-				(((u16)cmd_ptr[0]) << 8),
-				tx_buf + 2,
-				rx_buf
-			);
             
       spi_message_init(&msg);
 		spi_message_add_tail(&tr, &msg);
-      spi_message_add_tail(&tr2, &msg);
 		
 		err = spi_sync(rfm12->spi, &msg);
 		
@@ -1609,24 +1688,34 @@ rfm69_setup(struct rfm12_data* rfm12)
 static int
 rfm69_start_receiving(struct rfm12_data* rfm12)
 {
-   return rfm69_flush_fifo_and_start_receiving(rfm12);
+   return rfm69_flush_fifo_with_finish_handler(rfm12,
+      rfm69_start_receiving_with_empty_fifo);
+}
+
+static void
+rfm69_start_receiving_with_empty_fifo(struct rfm12_data* rfm12)
+{
+   (void)rfm69_set_mode(rfm12, RFM69_MODE_RECEIVER, NULL);
+   (void)rfm_start_receiving_common(rfm12);
 }
 
 static int
-rfm69_flush_fifo_and_start_receiving(struct rfm12_data* rfm12)
+rfm69_flush_fifo_with_finish_handler(struct rfm12_data* rfm12,
+   void (*a_handler)(struct rfm12_data*))
 {
    u16 cmd = ((u16)RFM69_REG_IRQFLAGS2) << 8;
+ 
+   rfm12->rf69_flush_fifo_callback = a_handler;
       
    return rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
       0,
-      rfm69_flush_fifo_and_start_receiving_completion_handler,
+      rfm69_flush_fifo_async_completion_handler,
       RFM12_STATE_NO_CHANGE);
 }
 
 static void
-rfm69_flush_fifo_and_start_receiving_completion_handler(void* arg)
+rfm69_flush_fifo_async_completion_handler(void* arg)
 {
-   int err;
    struct rfm12_spi_message* spi_msg =
       (struct rfm12_spi_message*)arg;
    struct rfm12_data* rfm12 =
@@ -1639,19 +1728,17 @@ rfm69_flush_fifo_and_start_receiving_completion_handler(void* arg)
       
       (void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
          0,
-         rfm69_flush_fifo_and_start_receiving_loop_handler,
+         rfm69_flush_fifo_async_loop_handler,
          RFM12_STATE_NO_CHANGE);
-   } else {   
-      err = rfm69_set_mode(rfm12, RFM69_MODE_RECEIVER, NULL);
-
-      if (0 == err) {
-         (void)rfm_start_receiving_common(rfm12);
-      }      
+   } else {
+      if (NULL != rfm12->rf69_flush_fifo_callback) {
+         rfm12->rf69_flush_fifo_callback(rfm12);
+      }
    }
 }
 
 static void
-rfm69_flush_fifo_and_start_receiving_loop_handler(void* arg)
+rfm69_flush_fifo_async_loop_handler(void* arg)
 {
    struct rfm12_spi_message* spi_msg =
       (struct rfm12_spi_message*)arg;
@@ -1660,13 +1747,213 @@ rfm69_flush_fifo_and_start_receiving_loop_handler(void* arg)
    
    rfm12_spi_completion_common(spi_msg);
 
-   rfm69_flush_fifo_and_start_receiving(rfm12);
+   rfm69_flush_fifo_with_finish_handler(rfm12,
+      rfm12->rf69_flush_fifo_callback);
 }
 
 static int
 rfm69_try_sending(struct rfm12_data* rfm12)
 {
-   return 0;
+   int retval = 0;
+
+   if (!rfm12->trysend
+      && NULL != rfm12->out_buf
+      && rfm12->out_cur_end != rfm12->out_buf) {
+     
+      uint16_t cmd = ((u16)RFM69_REG_RSSIVALUE) << 8;
+      
+      (void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
+         0, rfm69_trysend_completion_handler, RFM12_STATE_NO_CHANGE);
+      
+      retval = rfm12->trysend = 1;
+   }
+         
+   return retval;
+}
+
+static void
+rfm69_trysend_completion_handler(void *arg)
+{
+   unsigned long flags;
+   int rssi = 0;
+   struct rfm12_spi_message* spi_msg =
+     (struct rfm12_spi_message*)arg; 
+   struct rfm12_data* rfm12 =
+     (struct rfm12_data*)spi_msg->context;
+
+   spin_lock_irqsave(&rfm12->lock, flags);
+
+   rfm12_spi_completion_common(spi_msg);
+   
+   rfm_finish_trysend(rfm12);
+
+   rssi = RFM69_RSSIVAL_TO_DBM(spi_msg->spi_rx[1]);
+      
+   if ((RFM12_STATE_IDLE == rfm12->state || RFM12_STATE_LISTEN == rfm12->state) &&
+       rssi < RFM69_RSSIVAL_SEND_MIN) {
+      rfm12->state = RFM12_STATE_SEND_PRE1;
+      
+      rfm69_set_mode(rfm12, RFM69_MODE_STANDBY, NULL);
+            
+      rfm69_flush_fifo_with_finish_handler(rfm12,
+         rfm69_start_sending_with_empty_fifo);
+   } else if (RFM12_STATE_SEND_PRE1 > rfm12->state) {
+      // try again a bit later...
+      rfm_start_trysend_retry_timer(rfm12);
+   }
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
+}
+
+static void
+rfm69_start_sending_with_empty_fifo(struct rfm12_data* rfm12)
+{
+   u16 cmd = (((u16)(RFM69_REG_DIOMAPPING1 | RFM69_MASK_REGWRITE)) << 8)
+      | RFM69_DIOMAPPING1_DIO0_00;
+   
+   (void)rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
+      0, rfm69_start_sending_with_empty_fifo_handler, RFM12_STATE_NO_CHANGE);
+}
+
+static void
+rfm69_start_sending_with_empty_fifo_handler(void* arg)
+{
+   struct rfm12_spi_message* spi_msg =
+      (struct rfm12_spi_message*)arg;
+   struct rfm12_data* rfm12 =
+      (struct rfm12_data*)spi_msg->context;
+   
+   rfm12_spi_completion_common(spi_msg);
+
+   rfm69_set_mode(rfm12, RFM69_MODE_XMITTER,
+      rfm69_set_mode_transmitter_callback);
+}
+
+static void
+rfm69_set_mode_transmitter_callback(void* arg)
+{
+   struct rfm12_spi_message* spi_msg =
+      (struct rfm12_spi_message*)arg;
+   struct rfm12_data* rfm12 =
+      (struct rfm12_data*)spi_msg->context;
+   
+   rfm12_spi_completion_common(spi_msg);
+   
+   rfm12->out_buf_pos = rfm12->out_buf;
+   rfm12->out_cur_num_bytes = rfm12->out_buf_pos[1] + RF_EXTRA_LEN;
+   rfm12->state = RFM12_STATE_SEND;
+   
+   rfm_update_rxtx_watchdog(rfm12, 0);
+      
+   (void)rfm69_send_fifo_loop(rfm12);
+}
+
+static int
+rfm69_send_fifo_loop(struct rfm12_data* rfm12)
+{
+   unsigned long flags;
+   u16 cmds[2];
+   u8 out_byte;
+   int packet_finished = 0, err = 0;
+   
+   spin_lock_irqsave(&rfm12->lock, flags);
+   
+   if (rfm12->state < RFM12_STATE_SEND) {
+      spin_unlock_irqrestore(&rfm12->lock, flags);
+      return 0;
+   }
+   
+   switch (rfm12->state) {
+      case RFM12_STATE_SEND: {
+         if (0 < rfm12->out_cur_num_bytes) {
+            out_byte = *rfm12->out_buf_pos++;
+            rfm12->out_cur_num_bytes--;
+         } else {
+            out_byte = 0xAA;
+            rfm12->state = RFM12_STATE_SEND_FINISHED;
+         }
+         
+         break;
+      }
+      
+      case RFM12_STATE_SEND_FINISHED: {
+         packet_finished = 1;
+         break;
+      }
+      
+      default: {
+         out_byte = 0xAA;
+         rfm12->state++;
+         
+         break;
+      }
+   }
+   
+   if (!packet_finished) {
+      rfm_update_rxtx_watchdog(rfm12, 0);
+   
+      cmds[0] = (((u16)(RFM69_REG_FIFO | RFM69_MASK_REGWRITE)) << 8)
+         | out_byte;
+      cmds[1] = ((u16)RFM69_REG_IRQFLAGS2) << 8;
+   
+      err = rfm12_send_generic_async_cmd(rfm12, cmds, 2,
+         0, rfm69_send_fifo_loop_callback, RFM12_STATE_NO_CHANGE);         
+   } else {
+      // nothing to do but wait for the packetsent interrupt
+      err = 0;
+   }
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
+   
+   return err;
+}
+
+static void
+rfm69_send_fifo_loop_callback(void* arg)
+{
+   unsigned long flags;
+   u16 cmds[2];
+   struct rfm12_spi_message* spi_msg =
+      (struct rfm12_spi_message*)arg;
+   struct rfm12_data* rfm12 =
+      (struct rfm12_data*)spi_msg->context;
+   
+   spin_lock_irqsave(&rfm12->lock, flags);
+   
+   rfm12_spi_completion_common(spi_msg);
+   
+   if (spi_msg->spi_rx[3] & RFM69_IRQ2_FIFOFULL) {
+      cmds[0] = ((u16)RFM69_REG_IRQFLAGS2) << 8;
+      cmds[1] = cmds[0];
+      
+      (void)rfm12_send_generic_async_cmd(rfm12, cmds, 2,
+         0, rfm69_send_fifo_loop_callback,
+         RFM12_STATE_NO_CHANGE);
+      
+      spin_unlock_irqrestore(&rfm12->lock, flags);
+   } else {
+      spin_unlock_irqrestore(&rfm12->lock, flags);
+      
+      (void)rfm69_send_fifo_loop(rfm12);
+   }
+}
+
+static int
+rfm69_stop_listening_and_send(struct rfm12_data* rfm12)
+{
+   int err = 0;
+
+   if (RFM12_STATE_LISTEN == rfm12->state) {
+      rfm12->state = RFM12_STATE_IDLE;
+      
+      err = rfm69_set_mode(
+         rfm12,
+         RFM69_MODE_STANDBY,
+         rfm_stop_listening_and_send_callback
+      );
+   }
+   
+   return err;
 }
 
 static int
@@ -1756,15 +2043,16 @@ rfm69_request_fifo_byte_completion_handler(void* arg)
 static int
 rfm69_finish_send_recv_common(struct rfm12_data* rfm12)
 {
-   uint16_t cmds[1];
+   u16 cmd;
    
    rfm69_set_mode(rfm12, RFM69_MODE_STANDBY, NULL);
    
-   cmds[0] = ((u16)RFM69_REG_IRQFLAGS2) << 8;
+   cmd = (((u16)(RFM69_REG_DIOMAPPING1 | RFM69_MASK_REGWRITE)) << 8)
+      | RFM69_DIOMAPPING1_DIO0_10;
    
    rfm12->state = RFM12_STATE_IDLE;
    
-   return rfm12_send_generic_async_cmd(rfm12, cmds, 1,
+   return rfm12_send_generic_async_cmd(rfm12, &cmd, 1,
       0, rfm_finish_send_or_recv_callback, RFM12_STATE_NO_CHANGE);
 }
 
@@ -1876,7 +2164,7 @@ size_t count, loff_t *f_pos)
     if (RFM12_STATE_IDLE == rfm12->state) {
        rfm_begin_sending_or_receiving(rfm12);
     } else if (RFM12_STATE_LISTEN == rfm12->state) {
-       rfm12_stop_listening_and_send(rfm12);
+       rfmXX_stop_listening_and_send(rfm12);
     }
 
    spin_unlock_irqrestore(&rfm12->lock, flags);
