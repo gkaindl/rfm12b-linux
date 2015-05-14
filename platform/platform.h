@@ -59,6 +59,6 @@ struct spi_rfm12_board_config {
 struct rfm12_data;
 
 static void
-rfm12_handle_interrupt(struct rfm12_data* rfm12);
+rfmXX_handle_interrupt(struct rfm12_data* rfm12);
 
 #endif

@@ -75,7 +75,7 @@ spi_rfm12_irq_handler(int irq, void* dev_id)
          disable_irq_nosync(brd->irq);
       }
       
-      rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
+      rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
    }
    
    return IRQ_HANDLED;
@@ -89,7 +89,7 @@ platform_irq_handled(void* identifier)
       
    if (0 == brd->state.irq_enabled) {
       if (0 && 1 == gpio_get_value(cfg->irq_pin)) // TODO: needs falling!!
-         rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
+         rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
       else {
          brd->state.irq_enabled = 1;
          enable_irq(brd->irq);
