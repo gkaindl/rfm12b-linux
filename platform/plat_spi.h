@@ -37,10 +37,12 @@ struct spi_rfm12_active_board {
    void* irq_data;
    struct spi_device* spi_device;
    int idx;
+   rfm12_module_type_t module_type;
    struct {
       u8 gpio_claimed:1;
       u8 irq_claimed:1;
       u8 irq_enabled:1;
+      u8 irq_pinmuxed:1;
    } state;
 };
 
@@ -216,14 +218,35 @@ platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
 }
 
 static int
-platform_irq_init(void* identifier, u32 irq_trigger, void* rfm12_data)
+platform_irq_init(void* identifier, rfm12_module_type_t module_type,
+   void* rfm12_data)
 {
    int err;
+   u32 irq_trigger;
    struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
    struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
 
    if (brd->state.irq_claimed)
       return -EBUSY;
+
+   err = spi_rfm12_init_irq_pin_settings(module_type);
+   
+   if (err) {
+      return err;
+   }
+   
+   brd->state.irq_pinmuxed = 1;
+   brd->module_type = module_type;
+
+   switch(module_type) {
+      case RFM12_TYPE_RF12:
+         irq_trigger = IRQF_TRIGGER_FALLING;
+         break;
+      case RFM12_TYPE_RF69:
+      default:
+         irq_trigger = IRQF_TRIGGER_RISING;
+         break;
+   }
 
    err = request_any_context_irq(
       brd->irq,
@@ -265,6 +288,14 @@ platform_irq_cleanup(void* identifier)
       free_irq(brd->irq, (void*)brd);
       brd->state.irq_claimed = 0;      
       brd->irq_data = NULL;
+   }
+   
+   if (!err && brd->state.irq_pinmuxed) {
+      err = spi_rfm12_cleanup_irq_pin_settings(brd->module_type);
+      
+      if (!err) {
+         brd->state.irq_pinmuxed = 0;
+      }
    }
    
    return err;

@@ -42,7 +42,8 @@ static void*
 platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs);
 
 static int
-platform_irq_init(void* identifier, u32 irq_trigger, void* rfm12_data);
+platform_irq_init(void* identifier, rfm12_module_type_t  module_type,
+   void* rfm12_data);
 
 static int
 platform_irq_handled(void* identifier);

@@ -147,11 +147,6 @@ typedef enum _rfm12_state_t {
    RFM12_STATE_SEND_FINISHED  = 16
 } rfm12_state_t;
 
-typedef enum _rfm12_module_type_t {
-	RFM12_TYPE_RF12	= 0,
-	RFM12_TYPE_RF69
-} rfm12_module_type_t;
-
 struct rfm12_spi_message {
    struct spi_message   spi_msg;
    struct spi_transfer  spi_transfers[4];
@@ -2424,7 +2419,6 @@ rfm_filop_open(struct inode *inode, struct file *filp)
 {
    struct rfm12_data* rfm12;
    unsigned long flags;
-   u32 irq_trigger = 0;
    int err = -ENXIO, has_irq = 0;
 
    mutex_lock(&device_list_lock);
@@ -2502,18 +2496,8 @@ rfm_filop_open(struct inode *inode, struct file *filp)
       if (0 == err)
          rfm_begin_sending_or_receiving(rfm12);
       
-      switch (rfm12->module_type) {
-         case RFM12_TYPE_RF69:
-            irq_trigger = IRQF_TRIGGER_RISING;
-            break;
-         case RFM12_TYPE_RF12:
-         default:
-            irq_trigger = IRQF_TRIGGER_FALLING;
-            break;
-      }
-      
       err = platform_irq_init(
-         rfm12->irq_identifier, irq_trigger, (void*)rfm12);
+         rfm12->irq_identifier, rfm12->module_type, (void*)rfm12);
       has_irq = (0 == err);  
    } else
       pr_debug("rfm12: nothing for minor %d\n", iminor(inode));

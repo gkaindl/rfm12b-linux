@@ -78,9 +78,9 @@ struct am33xx_pinmux_settings {
 static struct am33xx_pinmux_settings pinmux_settings[] = {
    {
       // beaglebone pin p9/27 (mcasp0_fsr)
-      // set as GPIO3_19 (mode 7), PULLUP ENABLED, INPUT ENABLED
+      // set as GPIO3_19 (mode 7), input, pull-state defined per-board type
       .pin_addr = AM33XX_CONTROL_BASE + 0x9a4,
-      .settings = 0x7 | (1 << 3) | (1 << 5) // TODO!!! PULLUP ENABLED, FUCK!!!
+      .settings = 0x7 | (0 << 3) | (1 << 5) // TODO!!! PULLUP ENABLED, FUCK!!!
    },
    {
       // beaglebone pin p9/42 (ecap0_in_pwm0_out)
@@ -122,13 +122,18 @@ static struct am33xx_pinmux_settings pinmux_settings[] = {
 static int
 spi_rfm12_init_pinmux_settings(void);
 static int
+spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type);
+static int
 spi_rfm12_cleanup_pinmux_settings(void);
+static int
+spi_rfm12_cleanup_irq_pin_settings(rfm12_module_type_t module_type);
 
 static int
 spi_rfm12_init_pinmux_settings(void)
 {   
    void* addr = NULL;
-   struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[0];
+   // first pinmux_setting is the IRQ pin, which is treated specially
+   struct am33xx_pinmux_settings* pin_conf = &pinmux_settings[1];
    
    while (0 != pin_conf->pin_addr) {      
       addr = ioremap(pin_conf->pin_addr, 4);
@@ -154,8 +159,50 @@ spi_rfm12_init_pinmux_settings(void)
 }
 
 static int
+spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
+{
+   void* addr = NULL;
+   struct am33xx_pinmux_settings irq_conf = pinmux_settings[0];
+   
+   addr = ioremap(irq_conf.pin_addr, 4);
+      
+   if (NULL == addr) {
+      printk(KERN_ALERT RFM12B_DRV_NAME
+         " : unable to ioremap memory address 0x%x during irq pin muxing.\n",
+         irq_conf.pin_addr
+      );
+      
+      (void)spi_rfm12_cleanup_irq_pin_settings(module_type);
+      
+      return -EBUSY;
+   }
+   
+   switch (module_type) {
+      case RFM12_TYPE_RF12:
+         irq_conf.settings |= (2 << 3); // pullup enabled
+         break;
+      case RFM12_TYPE_RF69:
+         irq_conf.settings |= (1 << 3); // no pull
+         break;
+      default:
+         break;
+   }
+   
+   iowrite32(irq_conf.settings, addr);
+   iounmap(addr);
+   
+   return 0;
+}
+
+static int
 spi_rfm12_cleanup_pinmux_settings(void)
 {   
+   return 0;
+}
+
+static int
+spi_rfm12_cleanup_irq_pin_settings(rfm12_module_type_t module_type)
+{
    return 0;
 }
 
