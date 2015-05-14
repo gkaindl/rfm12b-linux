@@ -123,11 +123,14 @@
   anything, though you can experiment with higher SPI frequencies -
   however, note that the RFM12b's datasheet mentions that 2.5MHz is
   the highest freq. for receiving, so experiment at your own risk!
+  The RFM69 should be fine with higher frequencies, such as 8MHz (10MHz being
+  the maximum according to the datasheet, so 8MHz should be safe!)
 */
 
-#define RFM12B_SPI_MAX_HZ    2500000
-#define RFM12B_SPI_MODE      0
-#define RFM12B_SPI_BITS      8
+#define RFM12B_SPI_MAX_HZ_RF12   2500000
+#define RFM12B_SPI_MAX_HZ_RF69   8000000
+#define RFM12B_SPI_MODE          0
+#define RFM12B_SPI_BITS          8
 
 /*
   The major and number of minors for registering the rfm12 SPI driver.

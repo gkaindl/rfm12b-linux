@@ -182,6 +182,7 @@ struct rfm12_data {
    int                  in_cur_num_bytes, out_cur_num_bytes;
    struct rfm12_spi_message spi_msgs[NUM_MAX_CONCURRENT_MSG];
    u8                   free_spi_msgs;
+   u32                  spi_speed_hz;
    struct timer_list    rxtx_watchdog;
    u8                   rxtx_watchdog_running;
    struct timer_list    retry_sending_timer;
@@ -200,9 +201,11 @@ rfm_claim_spi_message(struct rfm12_data* rfm12);
 static void
 rfm_unclaim_spi_message(struct rfm12_spi_message* spi_msg);
 struct spi_transfer
-rfm_make_spi_transfer(uint16_t cmd, u8* tx_buf, u8* rx_buf);
+rfm_make_spi_transfer(struct rfm12_data* rfm12,
+   uint16_t cmd, u8* tx_buf, u8* rx_buf);
 struct spi_transfer
-rfm_control_spi_transfer(struct rfm12_spi_message* msg,
+rfm_control_spi_transfer(struct rfm12_data* rfm12,
+   struct rfm12_spi_message* msg,
    u8 pos, uint16_t cmd);
 static void
 rfm_spi_completion_common(struct rfm12_spi_message* msg);
@@ -393,7 +396,8 @@ rfm_unclaim_spi_message(struct rfm12_spi_message* spi_msg)
 }
 
 struct spi_transfer
-rfm_make_spi_transfer(uint16_t cmd, u8* tx_buf, u8* rx_buf)
+rfm_make_spi_transfer(struct rfm12_data* rfm12,
+   uint16_t cmd, u8* tx_buf, u8* rx_buf)
 {
    struct spi_transfer tr = {
      .tx_buf           = tx_buf,
@@ -402,7 +406,7 @@ rfm_make_spi_transfer(uint16_t cmd, u8* tx_buf, u8* rx_buf)
      .cs_change        = 0,
      .bits_per_word    = 0,
      .delay_usecs      = 0,
-     .speed_hz         = 0
+     .speed_hz         = rfm12->spi_speed_hz
    };
 
    tx_buf[0] = (cmd >> 8) & 0xff;
@@ -412,10 +416,10 @@ rfm_make_spi_transfer(uint16_t cmd, u8* tx_buf, u8* rx_buf)
 }
 
 struct spi_transfer
-rfm_control_spi_transfer(struct rfm12_spi_message* msg,
-   u8 pos, uint16_t cmd)
+rfm_control_spi_transfer(struct rfm12_data* rfm12,
+   struct rfm12_spi_message* msg, u8 pos, uint16_t cmd)
 {   
-   return rfm_make_spi_transfer(cmd,
+   return rfm_make_spi_transfer(rfm12, cmd,
             msg->spi_tx + 2*pos,
             msg->spi_rx + 2*pos);
 }
@@ -479,7 +483,7 @@ rfm_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
    spi_msg->spi_msg.context = (void*)spi_msg;
 
    spi_msg->spi_transfers[0] =
-     rfm_control_spi_transfer(spi_msg, 0, cmds[0]);
+     rfm_control_spi_transfer(rfm12, spi_msg, 0, cmds[0]);
 
    i=1;
    if (num_cmds > 1) {
@@ -489,7 +493,7 @@ rfm_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
            spi_message_add_tail(&spi_msg->spi_transfers[i-1], &spi_msg->spi_msg);
    
            spi_msg->spi_transfers[i] =
-               rfm_control_spi_transfer(spi_msg, i, cmds[i]);
+               rfm_control_spi_transfer(rfm12, spi_msg, i, cmds[i]);
         }
    } 
    
@@ -514,6 +518,8 @@ rfm_detect_module_type(struct rfm12_data* rfm12)
       
 	err = 0;
 	sync_ptr = init_synchro;
+   
+   rfm12->spi_speed_hz = 250000; // 250KHz should be slow enough
 	
 	while (0 == err && 0 != *sync_ptr) {
 		int num_tries = 10;
@@ -526,6 +532,7 @@ rfm_detect_module_type(struct rfm12_data* rfm12)
          rx_buf[1] = 0;
       
 			tr = rfm_make_spi_transfer(
+               rfm12,
 					0x2F00 | (((u16)RFM69_MASK_REGWRITE) << 8) | *sync_ptr,
 					tx_buf,
 					NULL
@@ -534,6 +541,7 @@ rfm_detect_module_type(struct rfm12_data* rfm12)
          tr.cs_change = 1;
 					
 			tr2 = rfm_make_spi_transfer(
+               rfm12,
 					0x2F00,
 					tx_buf+2,
 					rx_buf
@@ -1119,18 +1127,19 @@ rfm12_setup(struct rfm12_data* rfm12)
    int err;
 
    rfm12->state = RFM12_STATE_CONFIG;
+   rfm12->spi_speed_hz = RFM12B_SPI_MAX_HZ_RF12;
 
    spi_message_init(&msg);
 
-   tr = rfm_make_spi_transfer(RF_READ_STATUS, tx_buf+0, NULL);
+   tr = rfm_make_spi_transfer(rfm12, RF_READ_STATUS, tx_buf+0, NULL);
    tr.cs_change = 1;
    spi_message_add_tail(&tr, &msg);
 
-   tr2 = rfm_make_spi_transfer(RF_SLEEP_MODE, tx_buf+2, NULL);
+   tr2 = rfm_make_spi_transfer(rfm12, RF_SLEEP_MODE, tx_buf+2, NULL);
    tr2.cs_change = 1;
    spi_message_add_tail(&tr2, &msg);
 
-   tr3 = rfm_make_spi_transfer(RF_TXREG_WRITE, tx_buf+4, NULL);
+   tr3 = rfm_make_spi_transfer(rfm12, RF_TXREG_WRITE, tx_buf+4, NULL);
    spi_message_add_tail(&tr3, &msg);
 
    err = spi_sync(rfm12->spi, &msg);
@@ -1143,68 +1152,68 @@ rfm12_setup(struct rfm12_data* rfm12)
    // ok, we're now ready to be configured.
    spi_message_init(&msg);
 
-   tr = rfm_make_spi_transfer(0x80C7 |
+   tr = rfm_make_spi_transfer(rfm12, 0x80C7 |
          ((rfm12->band_id & 0xff) << 4), tx_buf+0, NULL);
    tr.cs_change = 1;
    spi_message_add_tail(&tr, &msg);
 
-   tr2 = rfm_make_spi_transfer(0xA640, tx_buf+2, NULL);
+   tr2 = rfm_make_spi_transfer(rfm12, 0xA640, tx_buf+2, NULL);
    tr2.cs_change = 1;
    spi_message_add_tail(&tr2, &msg);
 
-   tr3 = rfm_make_spi_transfer(0xC600 | rfm12->bit_rate, tx_buf+4, NULL);
+   tr3 = rfm_make_spi_transfer(rfm12, 0xC600 | rfm12->bit_rate, tx_buf+4, NULL);
    tr3.cs_change = 1;
    spi_message_add_tail(&tr3, &msg);
 
-   tr4 = rfm_make_spi_transfer(0x94A2, tx_buf+6, NULL);
+   tr4 = rfm_make_spi_transfer(rfm12, 0x94A2, tx_buf+6, NULL);
    tr4.cs_change = 1;
    spi_message_add_tail(&tr4, &msg);
 
-   tr5 = rfm_make_spi_transfer(0xC2AC, tx_buf+8, NULL);
+   tr5 = rfm_make_spi_transfer(rfm12, 0xC2AC, tx_buf+8, NULL);
    tr5.cs_change = 1;
    spi_message_add_tail(&tr5, &msg);
 
    if (0 != rfm12->group_id) {
-     tr6 = rfm_make_spi_transfer(0xCA83, tx_buf+10, NULL);
+     tr6 = rfm_make_spi_transfer(rfm12, 0xCA83, tx_buf+10, NULL);
      tr6.cs_change = 1;
      spi_message_add_tail(&tr6, &msg);
 
-     tr7 = rfm_make_spi_transfer(0xCE00 |
+     tr7 = rfm_make_spi_transfer(rfm12, 0xCE00 |
         rfm12->group_id, tx_buf+12, NULL);
      tr7.cs_change = 1;
      spi_message_add_tail(&tr7, &msg);
    } else {
-     tr6 = rfm_make_spi_transfer(0xCA8B, tx_buf+10, NULL);
+     tr6 = rfm_make_spi_transfer(rfm12, 0xCA8B, tx_buf+10, NULL);
      tr6.cs_change = 1;
      spi_message_add_tail(&tr6, &msg);
 
-     tr7 = rfm_make_spi_transfer(0xCE2D, tx_buf+12, NULL);
+     tr7 = rfm_make_spi_transfer(rfm12, 0xCE2D, tx_buf+12, NULL);
      tr7.cs_change = 1;
      spi_message_add_tail(&tr7, &msg);
    }
 
-   tr8 = rfm_make_spi_transfer(0xC483, tx_buf+14, NULL);
+   tr8 = rfm_make_spi_transfer(rfm12, 0xC483, tx_buf+14, NULL);
    tr8.cs_change = 1;
    spi_message_add_tail(&tr8, &msg);
 
-   tr9 = rfm_make_spi_transfer(0x9850, tx_buf+16, NULL);
+   tr9 = rfm_make_spi_transfer(rfm12, 0x9850, tx_buf+16, NULL);
    tr9.cs_change = 1;
    spi_message_add_tail(&tr9, &msg);
 
-   tr10 = rfm_make_spi_transfer(0xCC77, tx_buf+18, NULL);
+   tr10 = rfm_make_spi_transfer(rfm12, 0xCC77, tx_buf+18, NULL);
    tr10.cs_change = 1;
    spi_message_add_tail(&tr10, &msg);
 
-   tr11 = rfm_make_spi_transfer(0xE000, tx_buf+20, NULL);
+   tr11 = rfm_make_spi_transfer(rfm12, 0xE000, tx_buf+20, NULL);
    tr11.cs_change = 1;
    spi_message_add_tail(&tr11, &msg);
 
-   tr12 = rfm_make_spi_transfer(0xC800, tx_buf+22, NULL);
+   tr12 = rfm_make_spi_transfer(rfm12, 0xC800, tx_buf+22, NULL);
    tr12.cs_change = 1;
    spi_message_add_tail(&tr12, &msg);
 
    // set low battery threshold to 2.9V
-   tr13 = rfm_make_spi_transfer(0xC047, tx_buf+24, NULL);
+   tr13 = rfm_make_spi_transfer(rfm12, 0xC047, tx_buf+24, NULL);
    spi_message_add_tail(&tr13, &msg);
 
    err = spi_sync(rfm12->spi, &msg);
@@ -1212,7 +1221,7 @@ rfm12_setup(struct rfm12_data* rfm12)
    if (0 == err) {
      spi_message_init(&msg);
 
-     tr = rfm_make_spi_transfer(RF_READ_STATUS, tx_buf+0, NULL);
+     tr = rfm_make_spi_transfer(rfm12, RF_READ_STATUS, tx_buf+0, NULL);
      spi_message_add_tail(&tr, &msg);
 
      err = spi_sync(rfm12->spi, &msg);
@@ -1574,6 +1583,7 @@ rfm69_flush_fifo_blocking(struct rfm12_data* rfm12)
    	struct spi_transfer tr, tr2;
 
    	tr = rfm_make_spi_transfer(
+            rfm12,
    			((u16)RFM69_REG_FIFO) << 8,
    			tx_buf,
    			NULL
@@ -1582,6 +1592,7 @@ rfm69_flush_fifo_blocking(struct rfm12_data* rfm12)
       tr.cs_change = 1;
       
    	tr2 = rfm_make_spi_transfer(
+            rfm12,
    			((u16)RFM69_REG_IRQFLAGS2) << 8,
    			tx_buf+2,
    			rx_buf
@@ -1672,6 +1683,9 @@ rfm69_setup(struct rfm12_data* rfm12)
 		0
    };
    
+   rfm12->state = RFM12_STATE_CONFIG;
+   rfm12->spi_speed_hz = RFM12B_SPI_MAX_HZ_RF69;
+   
 	if (0 == rfm12->group_id) {
 		printk(KERN_WARNING RFM12B_DRV_NAME
 			": group id 0 doesn't work well for RFM69!\n");
@@ -1706,6 +1720,7 @@ rfm69_setup(struct rfm12_data* rfm12)
 		struct spi_message msg;
 		struct spi_transfer tr =
 			rfm_make_spi_transfer(
+            rfm12,
 				(((u16)(cmd_ptr[0] | RFM69_MASK_REGWRITE)) << 8) | cmd_ptr[1],
 				tx_buf,
 				NULL

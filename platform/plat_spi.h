@@ -369,7 +369,7 @@ spi_rfm12_register_spi_devices(void)
          goto errReturn;
       }
       
-      spi_device->max_speed_hz = RFM12B_SPI_MAX_HZ;
+      spi_device->max_speed_hz = 0;
       spi_device->mode = RFM12B_SPI_MODE;
       spi_device->bits_per_word = RFM12B_SPI_BITS;
       spi_device->chip_select = board_configs[i].spi_cs;
