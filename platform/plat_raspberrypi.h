@@ -56,11 +56,17 @@
 *  modprobe spi-bcm2708
 */
 
+#if RFM12B_BOARD==1        // RPI
+#define GPIO_MEM_BASE      0x20200000
+#elif RFM12B_BOARD==4      // RPI2
+#define GPIO_MEM_BASE      0x3F200000
+#endif
+
 struct spi_rfm12_board_config board_configs[NUM_RFM12_BOARDS] = {
    {
-      .irq_pin      = 25,   // gpio 25
-      .spi_bus      = 0,   // spi port on P1 header
-      .spi_cs      = 1   // CS 1
+      .irq_pin      = 25, // gpio 25
+      .spi_bus      = 0,  // spi port on P1 header
+      .spi_cs       = 1   // CS 1
    }
 };
 
@@ -84,7 +90,7 @@ spi_rfm12_init_pinmux_settings(void)
 #define GPIO_PULLCLK0 *(gpio+38)
 
    int pin;
-   u32* gpio = ioremap(0x20200000, SZ_16K);
+   u32* gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
    
    // SPI0 is on gpio 7..11
    for (pin = 7; pin <= 11; pin++) {
@@ -112,7 +118,8 @@ spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
          break;
    }
    
-   // irq pin
+   u32* gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
+   
    INP_GPIO(25);
    SET_GPIO_ALT(25, 0);
    
@@ -122,6 +129,8 @@ spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
    udelay(500);
    GPIO_PULL = 0;
    GPIO_PULLCLK0 = 0;
+   
+   iounmap(gpio);
    
    return 0;
 }

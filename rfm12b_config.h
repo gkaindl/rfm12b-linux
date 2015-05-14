@@ -34,6 +34,7 @@
   Raspberry Pi      1               platform/plat_raspberrypi.h
   Beaglebone        2               platform/plat_beaglebone.h
   Beaglebone Black  3               platform/plat_beaglebone.h
+  Raspberry Pi 2    4               platform/plat_raspberrypi.h
 */
 #define RFM12B_BOARD        3
 
@@ -177,7 +178,7 @@ typedef enum _rfm12_module_type_t {
 
 #include "platform/platform.h"
 
-#if RFM12B_BOARD==1
+#if RFM12B_BOARD==1 || RFM12B_BOARD==4
 #include "platform/plat_raspberrypi.h"
 
 #elif RFM12B_BOARD==2 || RFM12B_BOARD==3
@@ -187,7 +188,7 @@ typedef enum _rfm12_module_type_t {
 #include "platform/plat_spi.h"
 #endif // BUILD_MODULE
 
-#if RFM12B_BOARD==1
+#if RFM12B_BOARD==1 || RFM12B_BOARD==4
 #define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".0.1"
 #elif RFM12B_BOARD==2 || RFM12B_BOARD==3
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
