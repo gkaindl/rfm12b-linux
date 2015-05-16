@@ -38,6 +38,7 @@ struct spi_rfm12_active_board {
    struct spi_device* spi_device;
    int idx;
    rfm12_module_type_t module_type;
+   u8 call_irq_on_pin_state, call_irq_pin_state;
    struct {
       u8 gpio_claimed:1;
       u8 irq_claimed:1;
@@ -90,7 +91,8 @@ platform_irq_handled(void* identifier)
    struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
       
    if (0 == brd->state.irq_enabled) {
-      if (0 && 1 == gpio_get_value(cfg->irq_pin)) // TODO: needs falling!!
+      if (brd->call_irq_on_pin_state 
+         && brd->call_irq_pin_state == gpio_get_value(cfg->irq_pin))
          rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
       else {
          brd->state.irq_enabled = 1;
@@ -241,10 +243,14 @@ platform_irq_init(void* identifier, rfm12_module_type_t module_type,
    switch(module_type) {
       case RFM12_TYPE_RF12:
          irq_trigger = IRQF_TRIGGER_FALLING;
+         brd->call_irq_on_pin_state = 1;
+         brd->call_irq_pin_state = 0;
          break;
       case RFM12_TYPE_RF69:
       default:
          irq_trigger = IRQF_TRIGGER_RISING;
+         brd->call_irq_on_pin_state = 0;
+         brd->call_irq_pin_state = 1;
          break;
    }
 
@@ -267,7 +273,8 @@ platform_irq_init(void* identifier, rfm12_module_type_t module_type,
          brd->irq, err
       );
 
-   if (0 == gpio_get_value(cfg->irq_pin))
+   if (brd->call_irq_on_pin_state 
+      && brd->call_irq_pin_state == gpio_get_value(cfg->irq_pin))
       spi_rfm12_irq_handler(brd->irq, (void*)brd);
 
    return err;   

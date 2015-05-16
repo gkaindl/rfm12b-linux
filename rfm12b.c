@@ -176,7 +176,7 @@ struct rfm12_data {
    u8*                  out_buf, *out_buf_pos;
    u8*                  in_cur_len_pos;
    u8*                  in_cur_end, *out_cur_end;
-   u16                  crc16, last_status;
+   u16                  crc16;
    int                  in_cur_num_bytes, out_cur_num_bytes;
    struct rfm12_spi_message spi_msgs[NUM_MAX_CONCURRENT_MSG];
    u8                   free_spi_msgs;
@@ -187,6 +187,8 @@ struct rfm12_data {
    u8                   retry_sending_running;
    wait_queue_head_t    wait_read;
    wait_queue_head_t    wait_write;
+   
+   u16                  rf12_last_status;
    
    u8                   rf69_req_mode, rf69_recv_read_rssi;
    int                  rf69_last_rssi;
@@ -1301,7 +1303,7 @@ rfm12_recv_spi_completion_handler(void *arg)
       ((status & RF_STATUS_BIT_FFIT_RGIT) && !(status & RF_STATUS_BIT_FFEM)) ||
       (status & RF_STATUS_BIT_FFOV_RGUR);
    
-   rfm12->last_status = status;
+   rfm12->rf12_last_status = status;
 
    if (valid_interrupt) {
       packet_finished = rfm_consume_received_byte(rfm12, recv_data[3]);
@@ -1339,7 +1341,7 @@ rfm12_send_spi_completion_handler(void *arg)
    rfm_spi_completion_common(spi_msg);
 
    status = (spi_msg->spi_rx[0] << 8) | spi_msg->spi_rx[1];
-   rfm12->last_status = status;
+   rfm12->rf12_last_status = status;
 
    valid_interrupt =
          ((status & RF_STATUS_BIT_FFIT_RGIT) || (status & RF_STATUS_BIT_FFOV_RGUR));
@@ -1439,7 +1441,7 @@ rfm12_trysend_completion_handler(void *arg)
 
    status = (spi_msg->spi_rx[0] << 8) | spi_msg->spi_rx[1];
 
-   rfm12->last_status = status;
+   rfm12->rf12_last_status = status;
       
    if ((RFM12_STATE_IDLE == rfm12->state || RFM12_STATE_LISTEN == rfm12->state) &&
        0 == (status & RF_STATUS_BIT_RSSI)) {
@@ -2283,7 +2285,7 @@ rfm_filop_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
          s.num_recv_crc16_fail = rfm12->num_recv_crc16_fail;
          s.num_send_underruns = rfm12->num_send_underruns;
          s.num_send_timeouts = rfm12->num_send_timeouts;
-         s.low_battery = (0 != (rfm12->last_status & RF_STATUS_BIT_LBAT));
+         s.low_battery = (0 != (rfm12->rf12_last_status & RF_STATUS_BIT_LBAT));
          s.rssi = rfm12->rf69_last_rssi;
 
          if (0 != copy_to_user((rfm12b_stats*)arg, &s, sizeof(rfm12b_stats)))
@@ -2505,12 +2507,12 @@ rfm_filop_open(struct inode *inode, struct file *filp)
           rfm12->rxtx_watchdog_running = 0;
           rfm12->retry_sending_running = 0;
           rfm12->crc16 = 0;
-          rfm12->last_status = 0;
           rfm12->should_release = 0;
           rfm12->trysend = 0;
           rfm12->in_cur_len_pos = rfm12->in_buf;
           rfm12->in_cur_end = rfm12->in_buf;
           rfm12->out_cur_end = rfm12->out_buf;
+          rfm12->rf12_last_status = 0;
           rfm12->rf69_last_rssi = -255;
           rfm12->rf69_recv_read_rssi = 0;
       }
