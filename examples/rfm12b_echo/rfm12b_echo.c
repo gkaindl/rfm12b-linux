@@ -54,7 +54,7 @@ void sig_handler(int signum)
 
 int main(int argc, char** argv)
 {
-   int fd, len, i;
+   int fd, len, i, has_rssi;
    char* devname, buf[128];
    unsigned long pkt_cnt;
    time_t tt;
@@ -71,6 +71,8 @@ int main(int argc, char** argv)
          devname, fd
       );
 
+   has_rssi = supports_rssi(fd);
+
    fflush(stdout);
    signal(SIGINT, sig_handler);
    signal(SIGTERM, sig_handler);
@@ -84,6 +86,11 @@ int main(int argc, char** argv)
       
       if (len > 0) {
          printf("%s", ctime(&tt));
+         
+         if (has_rssi) {
+            print_rssi(fd);
+         }
+         
          printf("\t%i bytes read\n\t\t", len);
          
          for (i=0; i<len; i++) {

@@ -172,12 +172,12 @@
 #if defined(MODULE_BOARD_CONFIGURED)
 #include <linux/version.h>
 
-#if BUILD_MODULE
-
 typedef enum _rfm12_module_type_t {
 	RFM12_TYPE_RF12	= 0,
 	RFM12_TYPE_RF69
 } rfm12_module_type_t;
+
+#if BUILD_MODULE
 
 #include "platform/platform.h"
 

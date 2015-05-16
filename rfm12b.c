@@ -39,8 +39,6 @@
 #include "rfm12b_ioctl.h"
 #include "rfm12b_jeenode.h"
 
-#define RFM69     1
-
 static u8 group_id      = RFM12B_DEFAULT_GROUP_ID;
 static u8 band_id         = RFM12B_DEFAULT_BAND_ID;
 static u8 bit_rate      = RFM12B_DEFAULT_BIT_RATE;
@@ -101,8 +99,8 @@ MODULE_PARM_DESC(jee_autoack,
 #define RFM69_IRQ2_FIFONOTEMPTY     (0x40)
 #define RFM69_IRQ2_FIFOOVERRUN      (0x10)
 
-#define RFM69_RSSIVAL_TO_DBM(val)   (-(((int)(val))>>1))
-#define RFM69_RSSIVAL_SEND_MIN      (-90)
+#define RFM69_RSSIVAL_TO_DBM(val)   (((int)(-(val)))>>1)
+#define RFM69_RSSIVAL_SEND_MIN      (-110)
 
 #define RF_MAX_DATA_LEN    66
 #define RF_EXTRA_LEN       4 // 4 : 1 byte hdr, 1 byte len, 2 bytes crc16 (see JeeLib)
@@ -190,7 +188,8 @@ struct rfm12_data {
    wait_queue_head_t    wait_read;
    wait_queue_head_t    wait_write;
    
-   u8                   rf69_req_mode;
+   u8                   rf69_req_mode, rf69_recv_read_rssi;
+   int                  rf69_last_rssi;
    void (*rf69_mode_callback)(void*); 
    void (*rf69_flush_fifo_callback)(struct rfm12_data*);
 };
@@ -1490,45 +1489,6 @@ rfm12_handle_interrupt(struct rfm12_data* rfm12)
 {   
    spin_lock(&rfm12->lock);
    
-   if (RFM12_TYPE_RF69 == rfm12->module_type) {      
-      switch (rfm12->state) {
-         case RFM12_STATE_LISTEN:
-         case RFM12_STATE_RECV:
-            rfm12->state = RFM12_STATE_RECV;
-            rfm_update_rxtx_watchdog(rfm12, 0);
-            (void)rfm69_poll_receive_fifo(rfm12);
-            break;
-         
-         case RFM12_STATE_SEND_PRE1:
-         case RFM12_STATE_SEND_PRE2:
-         case RFM12_STATE_SEND_PRE3:
-         case RFM12_STATE_SEND_SYN1:
-         case RFM12_STATE_SEND_SYN2:
-         case RFM12_STATE_SEND:
-         case RFM12_STATE_SEND_TAIL1:
-         case RFM12_STATE_SEND_TAIL2:
-         case RFM12_STATE_SEND_TAIL3: {
-            rfm12->num_send_underruns++;
-            rfm_finish_sending(rfm12, 0);
-            break;
-         }
-         
-         case RFM12_STATE_SEND_FINISHED: {
-            rfm_finish_sending(rfm12, 1);
-            break;
-         }
-         
-         default:
-            // bogus/uninteresting interrupt
-            platform_irq_handled(rfm12->irq_identifier);
-            break;
-      }
-      
-      spin_unlock(&rfm12->lock);
-      
-      return;
-   }
-   
    switch (rfm12->state) {
      case RFM12_STATE_LISTEN:
      case RFM12_STATE_RECV:
@@ -1660,12 +1620,12 @@ rfm69_setup(struct rfm12_data* rfm12)
    u8 config_init[] = {
 		0x01, 0x04, // OpMode = standby
 		0x02, 0x00, // DataModul = packet mode, fsk
-		0x03, 0x00, // BitRateMsb, data rate = 49,261 khz
-		0x04, 0x00, // BitRateLsb, divider = 32 MHz / 650
+		0x03, 0x00, // BitRateMsb
+		0x04, 0x00, // BitRateLsb
 		0x05, 0x05, // FdevMsb = 90 KHz
 		0x06, 0xC3, // FdevLsb = 90 KHz
 		0x0B, 0x20, // AfcCtrl, afclowbetaon
-      0x18, 0x88, // LNA gain selected by AGC loop, 50 ohm load
+      0x18, 0x08, // LNA gain selected by AGC loop, 50 ohm load
 		0x19, 0x42, // RxBw ...
 		0x1E, 0x2C, // FeiStart, AfcAutoclearOn, AfcAutoOn
 		0x25, 0x80, // DioMapping1 = SyncAddress (Rx)
@@ -1675,6 +1635,7 @@ rfm69_setup(struct rfm12_data* rfm12)
 		0x38, 0x00, // PayloadLength = 0, unlimited
 		0x3C, 0x8F, // FifoTresh, not empty, level 15
 		0x3D, 0x10, // PacketConfig2, interpkt = 1, autorxrestart off
+      0x58, 0x2D, // sensitivity boost (set to 1B if recv overloads)
 		0x6F, 0x20, // TestDagc ...
 		0x30, 0x00, // synchro2,
 		0x07, 0x00, // freq1
@@ -1699,7 +1660,7 @@ rfm69_setup(struct rfm12_data* rfm12)
 	cmd_ptr[5] = (bitrate_actual >> 8) & 0xff;
 	cmd_ptr[7] = bitrate_actual & 0xff;
 	
-	cmd_ptr[37] = rfm12->group_id;
+	cmd_ptr[39] = rfm12->group_id;
 	
 	switch (rfm12->band_id) {
 		case 1: rf69_freq = 43; break;
@@ -1710,9 +1671,9 @@ rfm69_setup(struct rfm12_data* rfm12)
 	rf69_freq = rf69_freq * 10000000L + rfm12->band_id * 2500L * 1600UL;
 	rf69_freq = ((rf69_freq << 2) / (32000000L >> 11)) << 6;
 	
-	cmd_ptr[39] = (rf69_freq >> 16) & 0xff;
-	cmd_ptr[41] = (rf69_freq >> 8)  & 0xff;
-	cmd_ptr[43] = (rf69_freq)       & 0xff;
+	cmd_ptr[41] = (rf69_freq >> 16) & 0xff;
+	cmd_ptr[43] = (rf69_freq >> 8)  & 0xff;
+	cmd_ptr[45] = (rf69_freq)       & 0xff;
    
    err = 0;
    
@@ -2019,9 +1980,17 @@ rfm69_stop_listening_and_send(struct rfm12_data* rfm12)
 static int
 rfm69_poll_receive_fifo(struct rfm12_data* rfm12)
 {
-   u16 cmd = ((u16)(RFM69_REG_IRQFLAGS2)) << 8;
+   u16 cmds[2];
+   u16 num_cmds = 1;
    
-   return rfm_send_generic_async_cmd(rfm12, &cmd, 1,
+   cmds[0] = ((u16)(RFM69_REG_IRQFLAGS2)) << 8;
+      
+   if (rfm12->rf69_recv_read_rssi) {
+      cmds[1] = ((u16)(RFM69_REG_RSSIVALUE)) << 8;
+      num_cmds++;
+   }
+   
+   return rfm_send_generic_async_cmd(rfm12, cmds, num_cmds,
       0, rfm69_poll_receive_fifo_completion_handler,
       RFM12_STATE_NO_CHANGE);
 }
@@ -2042,8 +2011,12 @@ rfm69_poll_receive_fifo_completion_handler(void* arg)
    rfm_spi_completion_common(spi_msg);
 
    status = spi_msg->spi_rx[1];
-   
-   rfm12->last_status = status;
+      
+   if (rfm12->rf69_recv_read_rssi) {
+      rfm12->rf69_recv_read_rssi = 0;
+      
+      rfm12->rf69_last_rssi = RFM69_RSSIVAL_TO_DBM(spi_msg->spi_rx[3]);      
+   }
 
    if (status & (RFM69_IRQ2_FIFONOTEMPTY | RFM69_IRQ2_FIFOOVERRUN)) {
       if (!(status & RFM69_IRQ2_FIFOOVERRUN)) {
@@ -2133,6 +2106,7 @@ rfm69_handle_interrupt(struct rfm12_data* rfm12)
       case RFM12_STATE_LISTEN:
       case RFM12_STATE_RECV:
          rfm12->state = RFM12_STATE_RECV;
+         rfm12->rf69_recv_read_rssi = 1;
          rfm_update_rxtx_watchdog(rfm12, 0);
          (void)rfm69_poll_receive_fifo(rfm12);
          break;
@@ -2310,8 +2284,41 @@ rfm_filop_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
          s.num_send_underruns = rfm12->num_send_underruns;
          s.num_send_timeouts = rfm12->num_send_timeouts;
          s.low_battery = (0 != (rfm12->last_status & RF_STATUS_BIT_LBAT));
+         s.rssi = rfm12->rf69_last_rssi;
 
          if (0 != copy_to_user((rfm12b_stats*)arg, &s, sizeof(rfm12b_stats)))
+               return -EACCES;
+         
+         break;
+      }
+      
+      case RFM12B_IOCTL_GET_MODULE_INFO: {
+         rfm12b_module_info s;
+         
+         s.module_type = rfm12->module_type;
+         
+         switch (rfm12->module_type) {
+            case RFM12_TYPE_RF69: {
+               s.module_capabilities.has_low_battery = 0;
+               s.module_capabilities.has_rssi = 1;
+               break;
+            }
+            
+            case RFM12_TYPE_RF12: {
+               s.module_capabilities.has_low_battery = 1;
+               s.module_capabilities.has_rssi = 0;
+               break;
+            }
+            
+            default: {
+               s.module_capabilities.has_low_battery = 0;
+               s.module_capabilities.has_rssi = 0;
+               break;
+            }
+         }
+            
+         if (0 != copy_to_user((rfm12b_module_info*)arg, &s,
+            sizeof(rfm12b_module_info)))
                return -EACCES;
          
          break;
@@ -2504,6 +2511,8 @@ rfm_filop_open(struct inode *inode, struct file *filp)
           rfm12->in_cur_len_pos = rfm12->in_buf;
           rfm12->in_cur_end = rfm12->in_buf;
           rfm12->out_cur_end = rfm12->out_buf;
+          rfm12->rf69_last_rssi = -255;
+          rfm12->rf69_recv_read_rssi = 0;
       }
       
       spin_unlock_irqrestore(&rfm12->lock, flags);

@@ -23,4 +23,10 @@
 // get rfm12b stats via ioctl and print to stdout
 void print_stats(int fd);
 
+// return 0 if module doesn't support rssi, not-0 otherwise
+int supports_rssi(int fd);
+
+// print the current rssi reading
+void print_rssi(int fd);
+
 #endif // __COMMON_H__
