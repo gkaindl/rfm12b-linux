@@ -100,7 +100,7 @@ MODULE_PARM_DESC(jee_autoack,
 #define RFM69_IRQ2_FIFOOVERRUN      (0x10)
 
 #define RFM69_RSSIVAL_TO_DBM(val)   (((int)(-(val)))>>1)
-#define RFM69_RSSIVAL_SEND_MIN      (-110)
+#define RFM69_RSSIVAL_SEND_MIN      (-90)
 
 #define RF_MAX_DATA_LEN    66
 #define RF_EXTRA_LEN       4 // 4 : 1 byte hdr, 1 byte len, 2 bytes crc16 (see JeeLib)
