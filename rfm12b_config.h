@@ -36,7 +36,7 @@
   Beaglebone Black  3               platform/plat_beaglebone.h
   Raspberry Pi 2    4               platform/plat_raspberrypi.h
 */
-#define RFM12B_BOARD        3
+#define RFM12B_BOARD        4
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
@@ -163,7 +163,7 @@
 
 /****************************** DON'T EDIT BELOW **************************/
 
-#if RFM12B_BOARD<=0 || RFM12B_BOARD>3
+#if RFM12B_BOARD<=0 || RFM12B_BOARD>4
 #error Please specify your board. (RFM12B_BOARD in rfm12b_config.h).
 #else
 #define MODULE_BOARD_CONFIGURED 1
