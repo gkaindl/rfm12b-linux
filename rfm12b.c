@@ -1459,7 +1459,7 @@ rfm12_trysend_completion_handler(void *arg)
       rfm_send_generic_async_cmd(rfm12, cmd, 4,
             0, NULL, RFM12_STATE_NO_CHANGE);
    } else if (RFM12_STATE_SEND_PRE1 > rfm12->state) {
-      // try again a bit later...
+      rfmXX_start_receiving(rfm12);
       rfm_start_trysend_retry_timer(rfm12);
    }
    
