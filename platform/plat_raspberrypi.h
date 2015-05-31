@@ -107,7 +107,8 @@ static int
 spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
 {
    u8 pull_mode = 0;
-   
+   u32* gpio = NULL;  
+ 
    switch (module_type) {
       case RFM12_TYPE_RF12:
          pull_mode = 0x2; // pullup
@@ -117,21 +118,23 @@ spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
          pull_mode = 0; // no pull
          break;
    }
+  
+   gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
    
-   u32* gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
+   if (NULL != gpio) { 
+      INP_GPIO(25);
+      SET_GPIO_ALT(25, 0);
    
-   INP_GPIO(25);
-   SET_GPIO_ALT(25, 0);
-   
-   GPIO_PULL = pull_mode;
-   udelay(500);
-   GPIO_PULLCLK0 = (1 << 25);
-   udelay(500);
-   GPIO_PULL = 0;
-   GPIO_PULLCLK0 = 0;
-   
-   iounmap(gpio);
-   
+      GPIO_PULL = pull_mode;
+      udelay(500);
+      GPIO_PULLCLK0 = (1 << 25);
+      udelay(500);
+      GPIO_PULL = 0;
+      GPIO_PULLCLK0 = 0;
+      
+      iounmap(gpio);
+   } 
+ 
    return 0;
 }
 
