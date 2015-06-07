@@ -56,18 +56,28 @@
 *  modprobe spi-bcm2708
 */
 
+#if RFM12B_BOARD==1        // RPI
+#define GPIO_MEM_BASE      0x20200000
+#elif RFM12B_BOARD==4      // RPI2
+#define GPIO_MEM_BASE      0x3F200000
+#endif
+
 struct spi_rfm12_board_config board_configs[NUM_RFM12_BOARDS] = {
    {
-      .irq_pin      = 25,   // gpio 25
-      .spi_bus      = 0,   // spi port on P1 header
-      .spi_cs      = 1   // CS 1
+      .irq_pin      = 25, // gpio 25
+      .spi_bus      = 0,  // spi port on P1 header
+      .spi_cs       = 1   // CS 1
    }
 };
 
 static int
 spi_rfm12_init_pinmux_settings(void);
 static int
+spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type);
+static int
 spi_rfm12_cleanup_pinmux_settings(void);
+static int
+spi_rfm12_cleanup_irq_pin_settings(rfm12_module_type_t module_type);
 
 static int
 spi_rfm12_init_pinmux_settings(void)
@@ -76,9 +86,11 @@ spi_rfm12_init_pinmux_settings(void)
    
 #define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
 #define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
+#define GPIO_PULL *(gpio+37)
+#define GPIO_PULLCLK0 *(gpio+38)
 
    int pin;
-   u32* gpio = ioremap(0x20200000, SZ_16K);
+   u32* gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
    
    // SPI0 is on gpio 7..11
    for (pin = 7; pin <= 11; pin++) {
@@ -86,20 +98,59 @@ spi_rfm12_init_pinmux_settings(void)
       SET_GPIO_ALT(pin, 0);
    }
    
-   // irq pin
-   INP_GPIO(25);
-   SET_GPIO_ALT(25, 0);
-   
    iounmap(gpio);
-
-#undef INP_GPIO
-#undef SET_GPIO_ALT
 
    return 0;
 }
 
 static int
+spi_rfm12_init_irq_pin_settings(rfm12_module_type_t module_type)
+{
+   u8 pull_mode = 0;
+   u32* gpio = NULL;  
+ 
+   switch (module_type) {
+      case RFM12_TYPE_RF12:
+         pull_mode = 0x2; // pullup
+         break;
+      case RFM12_TYPE_RF69:
+      default:
+         pull_mode = 0; // no pull
+         break;
+   }
+  
+   gpio = ioremap(GPIO_MEM_BASE, SZ_16K);
+   
+   if (NULL != gpio) { 
+      INP_GPIO(25);
+      SET_GPIO_ALT(25, 0);
+   
+      GPIO_PULL = pull_mode;
+      udelay(500);
+      GPIO_PULLCLK0 = (1 << 25);
+      udelay(500);
+      GPIO_PULL = 0;
+      GPIO_PULLCLK0 = 0;
+      
+      iounmap(gpio);
+   } 
+ 
+   return 0;
+}
+
+#undef INP_GPIO
+#undef SET_GPIO_ALT
+#undef GPIO_PULL
+#undef GPIO_PULLCLK0
+
+static int
 spi_rfm12_cleanup_pinmux_settings(void)
+{
+   return 0;
+}
+
+static int
+spi_rfm12_cleanup_irq_pin_settings(rfm12_module_type_t module_type)
 {
    return 0;
 }

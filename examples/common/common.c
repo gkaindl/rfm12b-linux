@@ -40,12 +40,36 @@ void print_stats(int fd)
          "\tnum_recv_crc16_fail: %lu\n"
          "\tnum_send_underruns: %lu\n"
          "\tnum_send_timeouts: %lu\n"
-         "\tlow_battery: %lu\n",
+         "\tlow_battery: %lu\n"
+         "\trssi: %d\n",
          s.bytes_recvd, s.pkts_recvd, s.bytes_sent, s.pkts_sent,
          s.num_recv_overflows, s.num_recv_timeouts, s.num_recv_crc16_fail,
          s.num_send_underruns, s.num_send_timeouts,
-         s.low_battery
+         s.low_battery, s.rssi
       );
    } else
       printf("ioctl() failed.\n");
+}
+
+int supports_rssi(int fd)
+{
+   int has_rssi;
+   rfm12b_module_info s;
+   
+   has_rssi = 0;
+   
+   if (0 == ioctl(fd, RFM12B_IOCTL_GET_MODULE_INFO, &s)) {
+      has_rssi = s.module_capabilities.has_rssi;      
+   }
+   
+   return has_rssi;
+}
+
+void print_rssi(int fd)
+{
+   rfm12b_stats s;
+   
+   if (0 == ioctl(fd, RFM12B_IOCTL_GET_STATS, &s)) {
+      printf("\trssi: %ddbm\n", s.rssi);
+   }
 }

@@ -116,6 +116,11 @@
 #define RFM12B_IOCTL_SET_JEEMODE_AUTOACK  _IOW(RFM12B_SPI_MAJOR, 10, int)
 
 /*
+  Retrieve information about the device, e.g. its type and its capabilities.
+*/
+#define RFM12B_IOCTL_GET_MODULE_INFO   _IOR(RFM12B_SPI_MAJOR, 11, rfm12b_module_info*)
+
+/*
    Structure for driver statistics (see RFM12B_IOCTL_GET_STATS).
    
    All statistics are tracked since the when the device was opened
@@ -134,6 +139,16 @@ typedef struct
       num_send_underruns,  // send buffer underrun count
       num_send_timeouts,   // timeout count during sending
       low_battery;         // yes/no if rfm12b Vcc is currently below threshold
+   int rssi;               // last rssi reading during receive (rfm69)
 } rfm12b_stats;
+
+typedef struct
+{
+   rfm12_module_type_t module_type;
+   struct {
+      unsigned has_low_battery:1;
+      unsigned has_rssi:1;
+   } module_capabilities;
+} rfm12b_module_info;
 
 #endif // __RFM12B_IOCTL_H__

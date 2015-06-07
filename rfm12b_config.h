@@ -34,8 +34,9 @@
   Raspberry Pi      1               platform/plat_raspberrypi.h
   Beaglebone        2               platform/plat_beaglebone.h
   Beaglebone Black  3               platform/plat_beaglebone.h
+  Raspberry Pi 2    4               platform/plat_raspberrypi.h
 */
-#define RFM12B_BOARD        0
+#define RFM12B_BOARD       0 
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
@@ -122,11 +123,14 @@
   anything, though you can experiment with higher SPI frequencies -
   however, note that the RFM12b's datasheet mentions that 2.5MHz is
   the highest freq. for receiving, so experiment at your own risk!
+  The RFM69 should be fine with higher frequencie (10MHz being the maximum
+  according to the datasheet).
 */
 
-#define RFM12B_SPI_MAX_HZ    2500000
-#define RFM12B_SPI_MODE      0
-#define RFM12B_SPI_BITS      8
+#define RFM12B_SPI_MAX_HZ_RF12   2500000
+#define RFM12B_SPI_MAX_HZ_RF69   10000000
+#define RFM12B_SPI_MODE          0
+#define RFM12B_SPI_BITS          8
 
 /*
   The major and number of minors for registering the rfm12 SPI driver.
@@ -159,7 +163,7 @@
 
 /****************************** DON'T EDIT BELOW **************************/
 
-#if RFM12B_BOARD<=0 || RFM12B_BOARD>3
+#if RFM12B_BOARD<=0 || RFM12B_BOARD>4
 #error Please specify your board. (RFM12B_BOARD in rfm12b_config.h).
 #else
 #define MODULE_BOARD_CONFIGURED 1
@@ -168,10 +172,16 @@
 #if defined(MODULE_BOARD_CONFIGURED)
 #include <linux/version.h>
 
+typedef enum _rfm12_module_type_t {
+	RFM12_TYPE_RF12	= 0,
+	RFM12_TYPE_RF69
+} rfm12_module_type_t;
+
 #if BUILD_MODULE
+
 #include "platform/platform.h"
 
-#if RFM12B_BOARD==1
+#if RFM12B_BOARD==1 || RFM12B_BOARD==4
 #include "platform/plat_raspberrypi.h"
 
 #elif RFM12B_BOARD==2 || RFM12B_BOARD==3
@@ -181,7 +191,7 @@
 #include "platform/plat_spi.h"
 #endif // BUILD_MODULE
 
-#if RFM12B_BOARD==1
+#if RFM12B_BOARD==1 || RFM12B_BOARD==4
 #define RF12_TESTS_DEV      "/dev/" RFM12B_DEV_NAME ".0.1"
 #elif RFM12B_BOARD==2 || RFM12B_BOARD==3
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)

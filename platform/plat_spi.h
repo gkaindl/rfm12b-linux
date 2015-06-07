@@ -37,10 +37,13 @@ struct spi_rfm12_active_board {
    void* irq_data;
    struct spi_device* spi_device;
    int idx;
+   rfm12_module_type_t module_type;
+   u8 call_irq_on_pin_state, call_irq_pin_state;
    struct {
       u8 gpio_claimed:1;
       u8 irq_claimed:1;
       u8 irq_enabled:1;
+      u8 irq_pinmuxed:1;
    } state;
 };
 
@@ -75,7 +78,7 @@ spi_rfm12_irq_handler(int irq, void* dev_id)
          disable_irq_nosync(brd->irq);
       }
       
-      rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
+      rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
    }
    
    return IRQ_HANDLED;
@@ -88,8 +91,9 @@ platform_irq_handled(void* identifier)
    struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
       
    if (0 == brd->state.irq_enabled) {
-      if (0 == gpio_get_value(cfg->irq_pin))
-         rfm12_handle_interrupt((struct rfm12_data*)brd->irq_data);
+      if (brd->call_irq_on_pin_state 
+         && brd->call_irq_pin_state == gpio_get_value(cfg->irq_pin))
+         rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
       else {
          brd->state.irq_enabled = 1;
          enable_irq(brd->irq);
@@ -216,19 +220,44 @@ platform_irq_identifier_for_spi_device(u16 spi_bus, u16 spi_cs)
 }
 
 static int
-platform_irq_init(void* identifier, void* rfm12_data)
+platform_irq_init(void* identifier, rfm12_module_type_t module_type,
+   void* rfm12_data)
 {
    int err;
+   u32 irq_trigger;
    struct spi_rfm12_active_board* brd = (struct spi_rfm12_active_board*)identifier;
    struct spi_rfm12_board_config* cfg = &board_configs[brd->idx];
 
    if (brd->state.irq_claimed)
       return -EBUSY;
 
+   err = spi_rfm12_init_irq_pin_settings(module_type);
+   
+   if (err) {
+      return err;
+   }
+   
+   brd->state.irq_pinmuxed = 1;
+   brd->module_type = module_type;
+
+   switch(module_type) {
+      case RFM12_TYPE_RF12:
+         irq_trigger = IRQF_TRIGGER_FALLING;
+         brd->call_irq_on_pin_state = 1;
+         brd->call_irq_pin_state = 0;
+         break;
+      case RFM12_TYPE_RF69:
+      default:
+         irq_trigger = IRQF_TRIGGER_RISING;
+         brd->call_irq_on_pin_state = 0;
+         brd->call_irq_pin_state = 1;
+         break;
+   }
+
    err = request_any_context_irq(
       brd->irq,
       spi_rfm12_irq_handler,
-      IRQF_TRIGGER_FALLING | IRQF_DISABLED,
+      irq_trigger | IRQF_DISABLED,
       RFM12B_DRV_NAME,
       (void*)brd
    );
@@ -244,7 +273,8 @@ platform_irq_init(void* identifier, void* rfm12_data)
          brd->irq, err
       );
 
-   if (0 == gpio_get_value(cfg->irq_pin))
+   if (brd->call_irq_on_pin_state 
+      && brd->call_irq_pin_state == gpio_get_value(cfg->irq_pin))
       spi_rfm12_irq_handler(brd->irq, (void*)brd);
 
    return err;   
@@ -265,6 +295,14 @@ platform_irq_cleanup(void* identifier)
       free_irq(brd->irq, (void*)brd);
       brd->state.irq_claimed = 0;      
       brd->irq_data = NULL;
+   }
+   
+   if (!err && brd->state.irq_pinmuxed) {
+      err = spi_rfm12_cleanup_irq_pin_settings(brd->module_type);
+      
+      if (!err) {
+         brd->state.irq_pinmuxed = 0;
+      }
    }
    
    return err;
@@ -338,7 +376,7 @@ spi_rfm12_register_spi_devices(void)
          goto errReturn;
       }
       
-      spi_device->max_speed_hz = RFM12B_SPI_MAX_HZ;
+      spi_device->max_speed_hz = 0;
       spi_device->mode = RFM12B_SPI_MODE;
       spi_device->bits_per_word = RFM12B_SPI_BITS;
       spi_device->chip_select = board_configs[i].spi_cs;
