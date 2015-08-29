@@ -32,6 +32,10 @@
 #include <linux/irq.h>
 #include <linux/spi/spi.h>
 
+#if !defined(IRQF_DISABLED)
+#define IRQF_DISABLED 0
+#endif
+
 struct spi_rfm12_active_board {
    u16 irq;
    void* irq_data;
