@@ -157,6 +157,9 @@ I've tested the driver on the following setups, usually running it for a couple 
   <tr>
     <td>Beaglebone Black</td><td>Ubuntu 14.04.2 LTS</td><td>3.19.3-bone4</td>
   </tr>
+  <tr>
+    <td>Beaglebone Black</td><td>Ubuntu 14.04.2 LTS</td><td>4.1.6-bone15</td>
+  </tr>
 </table>
 
 ## Future Work
