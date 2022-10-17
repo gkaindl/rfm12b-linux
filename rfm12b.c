@@ -235,8 +235,13 @@ static int
 rfm_finish_receiving(struct rfm12_data* rfm12, int skip_packet);
 static void
 rfm_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer);
-static void
-rfm_rxtx_watchdog_expired(unsigned long ptr);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+   static void rfm_rxtx_watchdog_expired(unsigned long ptr);
+#else
+   static void rfm_rxtx_watchdog_expired(struct timer_list *t);
+#endif
+
 static void
 rfm_apply_crc16(struct rfm12_data* rfm12, unsigned char* ptr, unsigned len);
 static u16
@@ -247,8 +252,13 @@ static void
 rfm_finish_trysend(struct rfm12_data* rfm12);
 static void
 rfm_start_trysend_retry_timer(struct rfm12_data* rfm12);
-static void
-rfm_trysend_retry_timer_expired(unsigned long ptr);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+static void rfm_trysend_retry_timer_expired(unsigned long ptr);
+#else
+static void rfm_trysend_retry_timer_expired(struct timer_list *t);
+#endif
+
 static int
 rfm_finish_sending(struct rfm12_data* rfm12, int success);
 static void
@@ -400,13 +410,18 @@ struct spi_transfer
 rfm_make_spi_transfer(struct rfm12_data* rfm12,
    uint16_t cmd, u8* tx_buf, u8* rx_buf)
 {
+   struct spi_delay spi_dly = {
+       .value = 0,
+       .unit = 0
+    };
+
    struct spi_transfer tr = {
      .tx_buf           = tx_buf,
      .rx_buf           = rx_buf,
      .len              = 2,
      .cs_change        = 0,
      .bits_per_word    = 0,
-     .delay_usecs      = 0,
+     .delay            = spi_dly,
      .speed_hz         = rfm12->spi_speed_hz
    };
 
@@ -469,6 +484,10 @@ rfm_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
 {
    int err, i;
    struct rfm12_spi_message* spi_msg;   
+   struct spi_delay spi_dly = {
+       .value = delay_usecs,
+       .unit = 0
+    };
 
    spi_msg = rfm_claim_spi_message(rfm12);
 
@@ -487,10 +506,11 @@ rfm_send_generic_async_cmd(struct rfm12_data* rfm12, uint16_t* cmds,
      rfm_control_spi_transfer(rfm12, spi_msg, 0, cmds[0]);
 
    i=1;
+
    if (num_cmds > 1) {
         for (i=1; i<num_cmds; i++) {
            spi_msg->spi_transfers[i-1].cs_change = 1;
-           spi_msg->spi_transfers[i-1].delay_usecs = delay_usecs;
+           spi_msg->spi_transfers[i-1].delay = spi_dly;
            spi_message_add_tail(&spi_msg->spi_transfers[i-1], &spi_msg->spi_msg);
    
            spi_msg->spi_transfers[i] =
@@ -726,13 +746,13 @@ rfm_begin_sending_or_receiving(struct rfm12_data* rfm12)
    }
 }
 
-static void
-rfm_rxtx_watchdog_expired(unsigned long ptr)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+static void rfm_rxtx_watchdog_expired(unsigned long ptr)
 {
    unsigned long flags;
    struct rfm12_data* rfm12 = (struct rfm12_data*)ptr;
 
-   spin_lock_irqsave(&rfm12->lock, flags);
+   spin_lock_irqsave(&rfm12->lock, flags);   
 
    if (RFM12_STATE_RECV >= rfm12->state &&
          RFM12_STATE_LISTEN <= rfm12->state) {
@@ -748,24 +768,58 @@ rfm_rxtx_watchdog_expired(unsigned long ptr)
    
    spin_unlock_irqrestore(&rfm12->lock, flags);
 }
+#else
+static void rfm_rxtx_watchdog_expired(struct timer_list *t)
+{
+   unsigned long flags;
+   //struct rfm12_data* rfm12 = from_timer
+   struct rfm12_data* rfm12 = from_timer(rfm12, t, rxtx_watchdog);
+
+   spin_lock_irqsave(&rfm12->lock, flags);   
+
+   if (RFM12_STATE_RECV >= rfm12->state &&
+         RFM12_STATE_LISTEN <= rfm12->state) {
+     rfm12->num_recv_timeouts++;
+     (void)rfm_finish_receiving(rfm12, 1);
+   } else if (RFM12_STATE_SEND_PRE1 <= rfm12->state &&
+        RFM12_STATE_SEND_TAIL3 >= rfm12->state) {
+     rfm12->num_send_timeouts++;
+     (void)rfm_finish_sending(rfm12, 0);        
+   }
+
+   rfm12->rxtx_watchdog_running = 0;
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
+}
+#endif
 
 static void
 rfm_update_rxtx_watchdog(struct rfm12_data* rfm12, u8 cancelTimer)
 {
-   if (rfm12->rxtx_watchdog_running) {
-     if (cancelTimer) {
+   if (rfm12->rxtx_watchdog_running) 
+   {
+     if (cancelTimer) 
+     {
        // not del_timer_sync, because we might be called within our
        // own expiration handler
        del_timer(&rfm12->rxtx_watchdog);
        rfm12->rxtx_watchdog_running = 0;
-     } else
-       mod_timer(&rfm12->rxtx_watchdog,
-         jiffies + RXTX_WATCHDOG_JIFFIES);
-   } else if (!cancelTimer) {
+     }
+     else
+       mod_timer(&rfm12->rxtx_watchdog, jiffies + RXTX_WATCHDOG_JIFFIES);
+   }
+   else if (!cancelTimer)
+   {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
      init_timer(&rfm12->rxtx_watchdog);
-     rfm12->rxtx_watchdog.expires = jiffies + RXTX_WATCHDOG_JIFFIES;
-     rfm12->rxtx_watchdog.data = (unsigned long)rfm12;
      rfm12->rxtx_watchdog.function = rfm_rxtx_watchdog_expired;
+#else
+     timer_setup(&rfm12->rxtx_watchdog, rfm_rxtx_watchdog_expired, 0);
+#endif
+
+     rfm12->rxtx_watchdog.expires = jiffies + RXTX_WATCHDOG_JIFFIES;
+     //rfm12->rxtx_watchdog.data = (unsigned long)rfm12;
+     
      add_timer(&rfm12->rxtx_watchdog);
      rfm12->rxtx_watchdog_running = 1;
    }
@@ -805,10 +859,9 @@ static void
 rfm_finish_send_or_recv_callback(void *arg)
 {
    unsigned long flags;
-   struct rfm12_spi_message* spi_msg =
-     (struct rfm12_spi_message*)arg; 
-   struct rfm12_data* rfm12 =
-     (struct rfm12_data*)spi_msg->context;
+   struct rfm12_spi_message* spi_msg = (struct rfm12_spi_message*)arg; 
+   struct rfm12_data* rfm12 = (struct rfm12_data*)spi_msg->context;
+
    u8 should_release = 0;
    
    spin_lock_irqsave(&rfm12->lock, flags);
@@ -840,16 +893,20 @@ rfm_finish_trysend(struct rfm12_data* rfm12)
 static void
 rfm_start_trysend_retry_timer(struct rfm12_data* rfm12)
 {
-   init_timer(&rfm12->retry_sending_timer);
+   #if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+     init_timer(&rfm12->retry_sending_timer);
+     rfm12->retry_sending_timer.function = rfm_trysend_retry_timer_expired;
+#else
+     timer_setup(&rfm12->retry_sending_timer, rfm_trysend_retry_timer_expired, 0);
+#endif
+
    rfm12->retry_sending_timer.expires = jiffies + TRYSEND_RETRY_JIFFIES;
-   rfm12->retry_sending_timer.data = (unsigned long)rfm12;
-   rfm12->retry_sending_timer.function = rfm_trysend_retry_timer_expired;
    add_timer(&rfm12->retry_sending_timer);
    rfm12->retry_sending_running = 1;
 }
 
-static void
-rfm_trysend_retry_timer_expired(unsigned long ptr)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+static void rfm_trysend_retry_timer_expired(unsigned long ptr)
 {
    unsigned long flags;
    struct rfm12_data* rfm12 = (struct rfm12_data*)ptr;
@@ -865,6 +922,24 @@ rfm_trysend_retry_timer_expired(unsigned long ptr)
    
    spin_unlock_irqrestore(&rfm12->lock, flags);
 }
+#else
+static void rfm_trysend_retry_timer_expired(struct timer_list *t)
+{
+   unsigned long flags;
+   struct rfm12_data* rfm12 = from_timer(rfm12, t, retry_sending_timer);
+
+   spin_lock_irqsave(&rfm12->lock, flags);
+
+   if (rfm12->retry_sending_running) {
+      rfm_finish_trysend(rfm12);
+      rfmXX_try_sending(rfm12);
+   } else {
+      rfm_finish_trysend(rfm12);
+   }
+   
+   spin_unlock_irqrestore(&rfm12->lock, flags);
+}
+#endif
 
 static int
 rfm_finish_sending(struct rfm12_data* rfm12, int success)

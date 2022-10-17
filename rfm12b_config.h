@@ -36,7 +36,7 @@
   Beaglebone Black  3               platform/plat_beaglebone.h
   Raspberry Pi 2    4               platform/plat_raspberrypi.h
 */
-#define RFM12B_BOARD       0 
+#define RFM12B_BOARD       0
 
 /*
   The name of the driver within the kernel (e.g. shows up in logs, etc...)
