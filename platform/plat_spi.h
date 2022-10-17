@@ -32,10 +32,6 @@
 #include <linux/irq.h>
 #include <linux/spi/spi.h>
 
-#if !defined(IRQF_DISABLED)
-#define IRQF_DISABLED 0
-#endif
-
 struct spi_rfm12_active_board {
    u16 irq;
    void* irq_data;
@@ -53,8 +49,6 @@ struct spi_rfm12_active_board {
 
 static struct spi_rfm12_active_board active_boards[NUM_RFM12_BOARDS];
 
-static int
-spi_rfm12_init_pinmux_settings(void);
 static int
 spi_rfm12_cleanup_pinmux_settings(void);
 
@@ -100,7 +94,6 @@ platform_irq_handled(void* identifier)
          rfmXX_handle_interrupt((struct rfm12_data*)brd->irq_data);
       else {
          brd->state.irq_enabled = 1;
-         enable_irq(brd->irq);
       }
    }
 
@@ -113,20 +106,23 @@ spi_rfm12_setup_irq_pins(void)
    int err, i;
       
    for (i=0; i<NUM_RFM12_BOARDS; i++) {
-      err = gpio_request_one(board_configs[i].irq_pin, GPIOF_IN,
-            RFM12B_DRV_NAME " irq pin");
-      if (0 != err) {
-         printk(KERN_ALERT RFM12B_DRV_NAME
-            " : unable to obtain GPIO pin %u.\n",
-            board_configs[i].irq_pin
-         );
-         
-         goto errReturn;
+      err = gpio_request(board_configs[i].irq_pin, RFM12B_DRV_NAME " irq pin");
+
+      if(err) {
+		   printk("Error!\nCan not allocate GPIO %d\n", board_configs[i].irq_pin);
+		   goto errReturn;
+	   }
+
+      err = gpio_direction_input(board_configs[i].irq_pin);
+      if(err) {
+		   printk("Error!\nCan not set GPIO %d to input!\n", board_configs[i].irq_pin);
+			goto errReturn;
       }
       
       active_boards[i].state.gpio_claimed = 1;
    
       err = gpio_to_irq(board_configs[i].irq_pin);
+
       if (err < 0) {
          printk(
             KERN_ALERT RFM12B_DRV_NAME
@@ -180,9 +176,6 @@ platform_module_init(void)
       active_boards[i].idx = i;
    }
    
-   err = spi_rfm12_init_pinmux_settings();
-   if (0 != err) goto muxFailed;
-   
    err = spi_rfm12_setup_irq_pins();
    if (0 != err) goto irqFailed;
    
@@ -195,7 +188,7 @@ spiFailed:
    spi_rfm12_cleanup_irq_pins();
 irqFailed:
    spi_rfm12_cleanup_pinmux_settings();
-muxFailed:
+
    return err;
 }
 
@@ -235,12 +228,6 @@ platform_irq_init(void* identifier, rfm12_module_type_t module_type,
    if (brd->state.irq_claimed)
       return -EBUSY;
 
-   err = spi_rfm12_init_irq_pin_settings(module_type);
-   
-   if (err) {
-      return err;
-   }
-   
    brd->state.irq_pinmuxed = 1;
    brd->module_type = module_type;
 
@@ -261,7 +248,7 @@ platform_irq_init(void* identifier, rfm12_module_type_t module_type,
    err = request_any_context_irq(
       brd->irq,
       spi_rfm12_irq_handler,
-      irq_trigger | IRQF_DISABLED,
+      irq_trigger,
       RFM12B_DRV_NAME,
       (void*)brd
    );
@@ -424,7 +411,7 @@ spi_rfm12_deregister_spi_devices(void)
    for (i=0; i<NUM_RFM12_BOARDS; i++) {
       if (NULL != active_boards[i].spi_device) {
          spi_unregister_device(active_boards[i].spi_device);
-         spi_dev_put(active_boards[i].spi_device);
+         //spi_dev_put(active_boards[i].spi_device);
          
          active_boards[i].spi_device = NULL;
       }
